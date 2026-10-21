@@ -11,7 +11,8 @@
       "background": "#431407",
       "accent": "#fb923c",
       "onAccent": "#431407",
-      "footer": "Acme Files – file sharing for Acme"
+      "footer": "Acme Files – file sharing for Acme",
+      "backgroundImage": "themes/_branding/background.jpg"
     }
   },
   "clients": {

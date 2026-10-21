@@ -22,7 +22,7 @@ Based on OpenCloud **7.2.4** (reva v2.46.8, web v7.1.5); see `versions.env`. Ima
 | 2 | **The web UI's Move action needs only rename permission,** no longer delete permission too, so "Can upload" users get it. Drag and drop and cut/paste had no such check. Moving to another space is a copy, as before. | `patches/web/0001-…` |
 | 3 | **The table is the default file view** instead of tiles. Users who already picked a view keep it (it's stored in their browser). | `patches/web/0002-…` |
 | 4 | **Accounts without a personal space (User Light) land on "Shared with me"** instead of the empty Spaces list. Others are unchanged. | `patches/web/0003-…` |
-| 5 | **The sign-in page follows the branding:** its tab title, tab icon, colours and footer (see [Branding](#branding)). Without branding it looks exactly as upstream's. | `patches/server/0001-…` |
+| 5 | **The sign-in page follows the branding:** its tab title, tab icon, colours, footer and, from 7.2.4-2, a background image (see [Branding](#branding)). Without branding it looks exactly as upstream's. | `patches/server/0001-…` |
 
 Everything else is upstream's: the image is the official one with only `/usr/bin/opencloud` replaced, built from the same sources and with the same toolchain and target. `opencloud version` and `status.php` report `7.2.4+custom.<build>`.
 
@@ -53,7 +53,11 @@ OpenCloud merges `themes/_branding/theme.json` over its own theme on every reque
     "slogan": "Acme Files – file sharing for Acme",
     "logo": "themes/_branding/logo.svg",
     "urls": { "imprint": "https://example.com/imprint", "privacy": "https://example.com/privacy" },
-    "signin": { "background": "#431407", "accent": "#fb923c", "onAccent": "#431407", "footer": "Acme Files – file sharing for Acme" }
+    "signin": {
+      "background": "#431407", "accent": "#fb923c", "onAccent": "#431407",
+      "footer": "Acme Files – file sharing for Acme",
+      "backgroundImage": "themes/_branding/background.jpg"
+    }
   },
   "clients": { "web": { "defaults": {
     "logo": "themes/_branding/logo-white.svg",
@@ -70,6 +74,7 @@ OpenCloud merges `themes/_branding/theme.json` over its own theme on every reque
 | `common.signin.accent` | The sign-in page's button, input focus ring and hexagon |
 | `common.signin.onAccent` | The text on the sign-in button |
 | `common.signin.footer` | The sign-in page's footer text (`""` hides it) |
+| `common.signin.backgroundImage` | A picture behind the sign-in page, in place of the hexagon (from 7.2.4-2) |
 | `common.urls.imprint`, `.privacy` | Links in the web UI |
 | `clients.web.defaults.logo` | The top bar of the web UI (dark by default, so use a light logo) |
 | `clients.web.defaults.logoMobile` | The top bar on narrow screens |
@@ -77,7 +82,7 @@ OpenCloud merges `themes/_branding/theme.json` over its own theme on every reque
 
 - **Logos** are SVG or PNG files in the same folder, referenced as `themes/_branding/<file>`.
 - **Colours:** `clients.web.themes` holds the light and dark theme. It's a list, and a list replaces upstream's as a whole, so copy both entries, as `theme.colors.example.json` does, and change the `primary`/`chrome` tokens. A theme entry can also set its own `logo` (the example uses the white logo in dark mode).
-- **The sign-in page's background** is an environment setting rather than a theme key: `IDP_LOGIN_BACKGROUND_URL=/themes/_branding/background.jpg` (put the file in the folder). It replaces upstream's background and hexagon.
+- **The sign-in page's background image** (`common.signin.backgroundImage`): a file in the folder, referenced like the logos, or an `https://` URL. It covers the page (scaled to fill, centred) and replaces the hexagon; `common.signin.background` still shows while it loads, so pick a matching colour. Use a JPEG or WebP of about 1920×1080 and a few hundred KB. Remove the key to get the plain background back. Upstream's environment setting `IDP_LOGIN_BACKGROUND_URL` still works and wins over the key.
 - **The sign-in page keys are ours** (patch 5): upstream's sign-in page ignores the theme apart from the logo. Colours accept CSS colour values (`#rrggbb`, `rgb(…)`, names). Keys you leave out keep upstream's look.
 - **Read-only mount:** the folder is the only source of truth. OpenCloud's own logo upload API (`/branding/logo`, which the 7.2 web UI doesn't use) can't change it. Edit it on the host (for example over SSH, by hand or with a management tool); the container only reads it.
 - **Source link (AGPL):** link this repository from the imprint page, or add another entry under `common.urls`.

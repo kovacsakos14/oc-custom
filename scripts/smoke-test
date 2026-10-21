@@ -37,6 +37,8 @@ grep -q '"name":"Acme Files"' <<<"$theme" || fail "the branding's name isn't in 
 # curl's broken pipe would count as a failure
 logo="$(curl -fsk "$url/themes/_branding/logo.svg")" || fail "the branding's logo isn't served"
 grep -q '<svg' <<<"$logo" || fail "the branding's logo isn't an SVG"
+grep -q '"backgroundImage":"themes/_branding/background.jpg"' <<<"$theme" || fail "the sign-in background key isn't in theme.json"
+curl -fsk -o /dev/null "$url/themes/_branding/background.jpg" || fail "the sign-in background image isn't served"
 echo "ok  branding"
 
 page="$(curl -fsk "$url/")" || fail "the web UI doesn't answer"
