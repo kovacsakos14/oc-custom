@@ -1,0 +1,51 @@
+# Checks weekly, without building, whether the patches still apply to the
+# latest patch release of our line (versions.env) and its stable branch, and,
+# as a heads-up only, to the latest release. Opens (or comments on) an issue
+# when a patch doesn't apply to our line.
+name: Compatibility
+
+on:
+  schedule:
+    - cron: "17 6 * * 1"
+  workflow_dispatch:
+    inputs:
+      refs:
+        description: "OpenCloud tags or branches to check, space-separated; refs after --info are a heads-up only (empty: the defaults)"
+        required: false
+
+permissions:
+  contents: read
+
+jobs:
+  compat:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Check the patches
+        id: check
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REFS: ${{ inputs.refs }}
+        run: |
+          set +e
+          # shellcheck disable=SC2086 # the refs are split on purpose
+          scripts/compat $REFS | tee result.txt
+          status=${PIPESTATUS[0]}
+          { echo '```'; cat result.txt; echo '```'; } >>"$GITHUB_STEP_SUMMARY"
+          exit $status
+      - name: Report
+        if: failure() && steps.check.outcome == 'failure'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          body="$(printf 'A patch no longer applies:\n\n```\n%s\n```\n\n%s' "$(cat result.txt)" "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID")"
+          issue="$(gh issue list --state open --label compat --json number --jq '.[0].number')"
+          if [ -n "$issue" ]; then
+            gh issue comment "$issue" --body "$body"
+          else
+            gh label create compat --color d73a4a --force >/dev/null
+            gh issue create --title "Patches don't apply to a newer OpenCloud" --label compat --body "$body"
+          fi

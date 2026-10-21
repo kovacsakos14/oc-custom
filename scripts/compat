@@ -1,0 +1,73 @@
+#!/usr/bin/env bash
+# Checks whether the patches still apply to other OpenCloud versions, without
+# building anything: for each server ref (tag or branch), it reads the reva and
+# web versions that ref pins and runs git apply --check with our patches.
+#   scripts/compat v7.2.5 stable-7.2 --info v8.1.0
+#   scripts/compat            # the latest patch release of our line and its stable
+#                             # branch, plus the latest release as --info
+# Prints one line per ref and patch. Exits 1 if a patch doesn't apply to a ref;
+# refs after --info are a heads-up only (a newer line we're not on yet).
+# Needs curl and git; uses the GitHub API without a token unless GH_TOKEN is set.
+set -euo pipefail
+
+repo="$(cd "$(dirname "$0")/.." && pwd)"
+work="$(mktemp -d)"
+trap 'rm -rf "$work"' EXIT
+
+raw() { # github repo, ref, path
+    curl -fsSL "https://raw.githubusercontent.com/$1/$2/$3"
+}
+api() {
+    curl -fsSL ${GH_TOKEN:+-H "Authorization: Bearer $GH_TOKEN"} "https://api.github.com/$1"
+}
+
+if [ $# -eq 0 ]; then
+    tags="$(api 'repos/opencloud-eu/opencloud/releases?per_page=50' | sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p')"
+    line="$(source "$repo/versions.env"; echo "$OC_VERSION" | sed 's/^\(v[0-9]*\.[0-9]*\)\..*/\1/')"
+    set -- "$(echo "$tags" | grep "^$line\.[0-9]*$" | sort -V | tail -1)" "stable-${line#v}" \
+        --info "$(echo "$tags" | grep '^v[0-9]*\.[0-9]*\.[0-9]*$' | sort -V | tail -1)"
+fi
+
+checkout() { # github repo, ref, dir
+    git -c advice.detachedHead=false clone -q --depth 1 -b "$2" "https://github.com/$1.git" "$3" 2>/dev/null ||
+        { # a pseudo-version (v2.51.1-0.2026…-<sha>) pins a commit, not a tag
+            git init -q "$3" &&
+                git -C "$3" fetch -q --depth 1 "https://github.com/$1.git" "${2##*-}" &&
+                git -C "$3" checkout -q FETCH_HEAD
+        }
+}
+
+status=0
+info=false
+declare -A seen
+for ref in "$@"; do
+    if [ "$ref" = "--info" ]; then
+        info=true
+        continue
+    fi
+    [ -n "$ref" ] && [ -z "${seen[$ref]:-}" ] || continue
+    seen[$ref]=1
+    reva="$(raw opencloud-eu/opencloud "$ref" go.mod | awk '$1 == "github.com/opencloud-eu/reva/v2" {print $2}')"
+    web="$(raw opencloud-eu/opencloud "$ref" services/web/Makefile | awk '$1 == "WEB_ASSETS_VERSION" {print $3}')"
+    if $info; then
+        echo "$ref (heads-up only): reva $reva, web $web"
+    else
+        echo "$ref: reva $reva, web $web"
+    fi
+    for part in reva web; do
+        version="$reva"
+        [ "$part" = web ] && version="$web"
+        dir="$work/$part-$version"
+        [ -d "$dir" ] || checkout "opencloud-eu/$part" "$version" "$dir"
+        for p in "$repo"/patches/"$part"/*.patch; do
+            [ -e "$p" ] || continue
+            if git -C "$dir" apply --check "$p" 2>/dev/null; then
+                echo "  ok        $part/$(basename "$p")"
+            else
+                echo "  CONFLICT  $part/$(basename "$p")"
+                $info || status=1
+            fi
+        done
+    done
+done
+exit $status
