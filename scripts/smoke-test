@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+# Starts an image with a fresh config and the example branding, and checks that
+# OpenCloud answers, reports the expected version, and serves the branding.
+#   scripts/smoke-test oc-custom:7.2.4-1
+set -euo pipefail
+
+repo="$(cd "$(dirname "$0")/.." && pwd)"
+# shellcheck source=../versions.env
+source "$repo/versions.env"
+image="$1"
+name="oc-custom-smoke-$$"
+port="${SMOKE_PORT:-9299}"
+trap 'docker rm -f "$name" >/dev/null 2>&1 || true' EXIT
+
+docker run -d --name "$name" -p "127.0.0.1:$port:9200" \
+    -e OC_URL="https://localhost:$port" -e OC_INSECURE=true -e PROXY_HTTP_ADDR=0.0.0.0:9200 \
+    -v "$repo/branding/example:/var/lib/opencloud/web/assets/themes/_branding:ro" \
+    --entrypoint sh "$image" -c 'opencloud init --insecure true --admin-password smoke-test >/dev/null && exec opencloud server' >/dev/null
+
+url="https://localhost:$port"
+echo -n "Waiting for OpenCloud"
+for _ in $(seq 60); do
+    curl -fsk "$url/status.php" >/dev/null 2>&1 && break
+    echo -n .; sleep 5
+done
+echo
+fail() { echo "FAIL: $*" >&2; docker logs --tail 30 "$name" >&2; exit 1; }
+
+status="$(curl -fsk "$url/status.php")" || fail "status.php doesn't answer"
+want="${OC_VERSION#v}+custom.$BUILD"
+echo "$status" | grep -q "\"productversion\": *\"$want\"" || fail "expected version $want in $status"
+echo "ok  version $want"
+
+theme="$(curl -fsk "$url/themes/opencloud/theme.json")" || fail "no theme.json"
+echo "$theme" | grep -q '"name":"Acme Files"' || fail "the branding's name isn't in theme.json"
+curl -fsk "$url/themes/_branding/logo.svg" | grep -q '<svg' || fail "the branding's logo isn't served"
+echo "ok  branding"
+
+curl -fsk "$url/" | grep -qi '<html' || fail "the web UI isn't served"
+echo "ok  web UI"

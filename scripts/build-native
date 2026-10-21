@@ -1,0 +1,66 @@
+#!/usr/bin/env bash
+# Builds the patched OpenCloud binary (amd64) with the patched web embedded,
+# then the image. Every step runs in a container with upstream's toolchain, so
+# only Docker is needed. Needs about 8 GB of RAM: run it in CI (GitHub Actions)
+# or on a strong machine, not on a small VM.
+#   scripts/build-native [image tag]     # default: oc-custom:<version>-<build>
+# Caches (pnpm store, Go modules and build cache) live in $OC_CUSTOM_CACHE
+# (default ~/.cache/oc-custom); CI keeps them between runs.
+set -euo pipefail
+
+repo="$(cd "$(dirname "$0")/.." && pwd)"
+# shellcheck source=../versions.env
+source "$repo/versions.env"
+tag="${1:-oc-custom:${OC_VERSION#v}-$BUILD}"
+cache="${OC_CUSTOM_CACHE:-$HOME/.cache/oc-custom}"
+up="$repo/upstream"
+mkdir -p "$cache"/{pnpm,go-mod,go-build} "$repo/out"
+
+NODE_IMAGE=node:24-alpine
+NODE_CI_IMAGE=quay.io/opencloudeu/nodejs-ci:24@sha256:4133e457d46874781ab84cf74b61055eec921b486c44eb2e8881a80ca171cd1a
+GO_CI_IMAGE=quay.io/opencloudeu/golang-ci:1.25@sha256:49ec402d6bdf36211306b7bdb2830555c9365dfa3cb12f833604fc742871fef5
+
+run() { # image, workdir (under upstream/), command
+    docker run --rm -u "$(id -u):$(id -g)" -e HOME=/tmp \
+        -e COREPACK_HOME=/cache/pnpm/corepack -e COREPACK_ENABLE_DOWNLOAD_PROMPT=0 \
+        -e npm_config_store_dir=/cache/pnpm/store \
+        -e GOMODCACHE=/cache/go-mod -e GOCACHE=/cache/go-build -e GOFLAGS=-buildvcs=false \
+        -v "$cache:/cache" -v "$up:/src" -w "/src/$2" "$1" sh -euc "$3"
+}
+
+"$repo/scripts/fetch"
+"$repo/scripts/apply"
+
+# 1. The patched web, as upstream packages it (Makefile.release: build + copy-config),
+# kept in out/web-dist. Skipped when that was built from the same version and
+# patches (CI restores it from its cache).
+web_key="$WEB_VERSION-$(cat "$repo"/patches/web/*.patch | sha256sum | cut -c1-16)"
+web_dist="$repo/out/web-dist"
+if [ "$(cat "$web_dist/.oc-custom-key" 2>/dev/null)" = "$web_key" ]; then
+    echo "web: out/web-dist is up to date ($web_key)"
+else
+    run "$NODE_IMAGE" web 'mkdir -p /tmp/bin && corepack enable --install-directory /tmp/bin && export PATH=/tmp/bin:$PATH &&
+        pnpm install --frozen-lockfile && pnpm build && cp config/config.json.dist dist/'
+    rm -rf "$web_dist"
+    cp -r "$up/web/dist" "$web_dist"
+    echo "$web_key" > "$web_dist/.oc-custom-key"
+fi
+
+# 2. The server: the IDP's frontend (the only other node-generate step), our
+# web in place of the downloaded one, reva from upstream/reva, then the same
+# target the official image uses.
+run "$NODE_CI_IMAGE" server/services/idp 'make node-generate-prod'
+rm -rf "$up/server/services/web/assets/core"
+mkdir -p "$up/server/services/web/assets/core"
+cp -r "$web_dist/." "$up/server/services/web/assets/core/"
+rm -f "$up/server/services/web/assets/core/.oc-custom-key"
+run "$GO_CI_IMAGE" server "go mod edit -replace github.com/opencloud-eu/reva/v2=../reva &&
+    make go-generate &&
+    make -C opencloud release-linux-docker-amd64 ENABLE_VIPS=true DIST=/src/server/dist \
+        VERSION=$OC_VERSION STRING=custom.$BUILD EDITION=stable"
+cp "$up/server/dist/binaries/opencloud-linux-amd64" "$repo/out/opencloud"
+
+# 3. The image: the official one with our binary
+docker build --build-arg "BASE_IMAGE=$BASE_IMAGE" -t "$tag" "$repo"
+docker run --rm --entrypoint sh "$tag" -c 'opencloud version | head -2 && ! ldd /usr/bin/opencloud | grep "not found"'
+echo "Built $tag"

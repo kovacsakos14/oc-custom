@@ -1,0 +1,67 @@
+# Builds the image in GitHub Actions (the build needs more RAM than a small VM
+# has). A tag v<oc version>-<build> (matching versions.env) publishes
+# ghcr.io/<owner>/oc-custom:<oc version>-<build>; a manual run publishes
+# :test-<sha> for trying a build in the test env first.
+name: Build
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  image:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - id: tag
+        name: Image tag
+        run: |
+          source versions.env
+          version="${OC_VERSION#v}-$BUILD"
+          if [ "$GITHUB_REF_TYPE" = tag ]; then
+            [ "$GITHUB_REF_NAME" = "v$version" ] || { echo "::error::tag $GITHUB_REF_NAME doesn't match versions.env (v$version)"; exit 1; }
+            tag="$version"
+          else
+            tag="test-${GITHUB_SHA::7}"
+          fi
+          echo "image=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/oc-custom:$tag" >>"$GITHUB_OUTPUT"
+          echo "web=web-$WEB_VERSION-${{ hashFiles('patches/web/*.patch') }}" >>"$GITHUB_OUTPUT"
+      # The patched web: rebuilt only when its version or patches change
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: out/web-dist
+          key: ${{ steps.tag.outputs.web }}
+      # pnpm store, Go modules and build cache
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/oc-custom
+          key: build-${{ hashFiles('versions.env', 'patches/**') }}-${{ github.run_id }}
+          restore-keys: |
+            build-${{ hashFiles('versions.env', 'patches/**') }}-
+            build-
+      - name: Build
+        run: scripts/build-native "${{ steps.tag.outputs.image }}"
+      - name: Smoke test
+        run: scripts/smoke-test "${{ steps.tag.outputs.image }}"
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Push
+        run: |
+          image="${{ steps.tag.outputs.image }}"
+          # Published tags are never overwritten
+          if [ "$GITHUB_REF_TYPE" = tag ] && docker manifest inspect "$image" >/dev/null 2>&1; then
+            echo "::error::$image exists already; bump BUILD in versions.env"; exit 1
+          fi
+          docker push "$image"
+          echo "Pushed \`$image\`" >>"$GITHUB_STEP_SUMMARY"
