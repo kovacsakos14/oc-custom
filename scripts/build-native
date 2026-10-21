@@ -46,16 +46,26 @@ else
     echo "$web_key" > "$web_dist/.oc-custom-key"
 fi
 
-# 2. The server: the IDP's frontend (the only other node-generate step), our
-# web in place of the downloaded one, reva from upstream/reva, then the same
+# 2. The server: the reva patches in its vendored reva (the same version, see
+# versions.env; vendor/ has no tests), the IDP's frontend (the only other
+# node-generate step), our web in place of the downloaded one, then the same
 # target the official image uses.
+vendored=vendor/github.com/opencloud-eu/reva/v2
+for p in "$repo"/patches/reva/*.patch; do
+    [ -e "$p" ] || continue
+    if git -C "$up/server" apply --directory="$vendored" --exclude='*_test.go' --reverse --check "$p" 2>/dev/null; then
+        echo "reva/$(basename "$p"): already in the vendored reva"
+    else
+        git -C "$up/server" apply --directory="$vendored" --exclude='*_test.go' "$p"
+        echo "reva/$(basename "$p"): applied to the vendored reva"
+    fi
+done
 run "$NODE_CI_IMAGE" server/services/idp 'make node-generate-prod'
 rm -rf "$up/server/services/web/assets/core"
 mkdir -p "$up/server/services/web/assets/core"
 cp -r "$web_dist/." "$up/server/services/web/assets/core/"
 rm -f "$up/server/services/web/assets/core/.oc-custom-key"
-run "$GO_CI_IMAGE" server "go mod edit -replace github.com/opencloud-eu/reva/v2=../reva &&
-    make go-generate &&
+run "$GO_CI_IMAGE" server "make go-generate &&
     make -C opencloud release-linux-docker-amd64 ENABLE_VIPS=true DIST=/src/server/dist \
         VERSION=$OC_VERSION STRING=custom.$BUILD EDITION=stable"
 cp "$up/server/dist/binaries/opencloud-linux-amd64" "$repo/out/opencloud"

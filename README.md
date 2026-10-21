@@ -89,7 +89,7 @@ The build needs more memory than a small VM has (the Go link step alone takes se
 `scripts/build-native` is what CI runs, and it works on any machine with Docker and about 8 GB of RAM:
 1. Fetch the upstream sources at the pinned versions and apply the patches.
 2. Build the patched web, cached in `out/web-dist` and rebuilt only when its version or patches change.
-3. Build the IDP frontend (patched), then the server binary in upstream's `golang-ci` image with the official image's target (`release-linux-docker-amd64`, libvips), reva replaced by the patched copy.
+3. Build the IDP frontend (patched), then the server binary in upstream's `golang-ci` image with the official image's target (`release-linux-docker-amd64`, libvips). The server vendors its dependencies, so the reva patches go into its vendored reva (the same version as `REVA_VERSION`).
 4. Copy the binary into the official image (`Dockerfile`), and check that it runs and finds its libraries.
 
 Caches (pnpm store, Go modules and build cache) are kept between CI runs. Only amd64 is built.
