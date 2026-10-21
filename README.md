@@ -31,7 +31,7 @@ Compared with a compose file for the official image, two lines change:
 ```yaml
 services:
   opencloud:
-    image: ghcr.io/kovacsakos14/oc-custom:7.2.4-2   # was: opencloudeu/opencloud:7.2.4
+    image: ghcr.io/kovacsakos14/oc-custom:7.2.4-3   # was: opencloudeu/opencloud:7.2.4
     volumes:
       - ./config:/etc/opencloud
       - ./data:/var/lib/opencloud
@@ -82,7 +82,7 @@ OpenCloud merges `themes/_branding/theme.json` over its own theme on every reque
 
 - **Logos** are SVG or PNG files in the same folder, referenced as `themes/_branding/<file>`.
 - **Colours:** `clients.web.themes` holds the light and dark theme. It's a list, and a list replaces upstream's as a whole, so copy both entries, as `theme.colors.example.json` does, and change the `primary`/`chrome` tokens. A theme entry can also set its own `logo` (the example uses the white logo in dark mode).
-- **The sign-in page's background image** (`common.signin.backgroundImage`): a file in the folder, referenced like the logos. Only paths on the server itself are used (since the build after 7.2.4-2; no `https://` URLs, `%` escapes or `..`), so the sign-in page loads nothing from other sites; the same goes for the favicon. For an image elsewhere, upstream's `IDP_LOGIN_BACKGROUND_URL` still works. It covers the page (scaled to fill, centred) and replaces the hexagon; `common.signin.background` still shows while it loads, so pick a matching colour. Use a JPEG or WebP of about 1920×1080 and a few hundred KB. Remove the key to get the plain background back. Upstream's environment setting `IDP_LOGIN_BACKGROUND_URL` still works and wins over the key.
+- **The sign-in page's background image** (`common.signin.backgroundImage`): a file in the folder, referenced like the logos. Only paths on the server itself are used (from 7.2.4-3; no `https://` URLs, `%` escapes or `..`), so the sign-in page loads nothing from other sites; the same goes for the favicon. For an image elsewhere, upstream's `IDP_LOGIN_BACKGROUND_URL` still works. It covers the page (scaled to fill, centred) and replaces the hexagon; `common.signin.background` still shows while it loads, so pick a matching colour. Use a JPEG or WebP of about 1920×1080 and a few hundred KB. Remove the key to get the plain background back. Upstream's environment setting `IDP_LOGIN_BACKGROUND_URL` still works and wins over the key.
 - **The sign-in page keys are ours** (patch 5): upstream's sign-in page ignores the theme apart from the logo. Colours accept CSS colour values (`#rrggbb`, `rgb(…)`, names). Keys you leave out keep upstream's look.
 - **Read-only mount:** the folder is the only source of truth. OpenCloud's own logo upload API (`/branding/logo`, which the 7.2 web UI doesn't use) can't change it. Edit it on the host (for example over SSH, by hand or with a management tool); the container only reads it.
 - **Source link (AGPL):** link this repository from the imprint page, or add another entry under `common.urls`.
@@ -163,7 +163,7 @@ Builds are tested in a separate OpenCloud test environment (Docker Compose, not 
 - `CLAUDE.md`: working notes for continuing development (decisions, findings, next steps).
 
 ## Status
-**Released:** `7.2.4-2` (2026-10-21): adds the sign-in background image (`common.signin.backgroundImage`) to patch 5; otherwise the same as `7.2.4-1`.
+**Released:** `7.2.4-3` (2026-10-21): the sign-in page takes background images and the favicon only from the server itself (no `https://` URLs, `%` escapes or `..`); the web is built with a pinned node image and pnpm, releases without caches. `7.2.4-2` (2026-10-21): adds the sign-in background image (`common.signin.backgroundImage`) to patch 5; otherwise the same as `7.2.4-1`.
 
 `7.2.4-1` (2026-10-21), OpenCloud 7.2.4 with patches 1–5. Tested:
 - what a "Can upload" recipient is told and can do (rename and move yes, delete no);
