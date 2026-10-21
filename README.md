@@ -12,6 +12,7 @@ Based on OpenCloud **7.2.4** (reva v2.46.8, web v7.1.5); see `versions.env`. Ima
 - [Updating to a new OpenCloud release](#updating-to-a-new-opencloud-release)
 - [Rolling back](#rolling-back)
 - [Testing](#testing)
+- [Status](#status)
 - [Licence](#licence)
 
 ## What's changed
@@ -154,6 +155,28 @@ Tested in nc2oc's test environment (`~/dev/nc2oc-migration/test-env`):
 - `scripts/smoke-test`: the image check.
 - `branding/example`: an example branding folder.
 - `test/`: the test env helpers.
+- `CLAUDE.md`: working notes for continuing development (decisions, findings, next steps).
+
+## Status
+**Released:** `7.2.4-1` (2026-10-21), OpenCloud 7.2.4 with patches 1–5. Tested in nc2oc's test environment:
+- what a "Can upload" recipient is told and can do (rename and move yes, delete no);
+- public upload links unchanged;
+- landing pages and the table view in a fresh browser;
+- the context menu actions;
+- the branding on the sign-in page and in the web UI;
+- nc2oc's migration check (`verify.sh`) and its Manage test (`manage-e2e.sh`).
+
+**Upstream compatibility** (`scripts/compat`, 2026-10-21):
+
+| OpenCloud | Patches |
+|---|---|
+| 7.2.4, stable-7.2 (the coming 7.2.5) | All apply |
+| 8.1.0 (rolling) | All apply except `web/0003` (User Light → "Shared with me"); its code changed in 8.x and needs a rebase |
+
+**Next:**
+- **7.2.5:** decide whether it's worth a rebuild once it's released.
+- **The next production release** (due mid-November 2026, probably 8.x): rebase `web/0003`, test it, and snapshot servers before upgrading, since 7.2 → 8 is one-way.
+- **Editing the branding** from nc2oc's Manage section is planned there.
 
 ## Licence
 - **Upstream:** OpenCloud's server and reva are Apache-2.0; OpenCloud Web is AGPL-3.0.
