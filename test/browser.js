@@ -2,7 +2,7 @@
 // records what they see: the sign-in page, where they land, and the file view
 // mode (table or tiles). Screenshots and result.json go to /out.
 // Run by test/browser in zenika/alpine-chrome:with-puppeteer.
-//   USERS="admin:secret dave:secret"
+//   USERS="admin:secret client1:secret"
 const fs = require('fs')
 const puppeteer = require('puppeteer')
 
@@ -48,7 +48,7 @@ async function main() {
         favicon: await page.$eval('link[rel~=icon]', (l) => l.getAttribute('href')).catch(() => null),
         logos: await page.$$eval('img', (imgs) => imgs.map((i) => i.getAttribute('src'))),
       }
-      // ACTIONS="dave:Dave/readme.txt": open the share, right-click the file and
+      // ACTIONS="client1:Client folder/readme.txt": open the share, right-click the file and
       // record the actions its context menu offers
       for (const spec of (process.env.ACTIONS || '').split(' ').filter((s) => s.startsWith(user.name + ':'))) {
         const [share, file] = spec.slice(user.name.length + 1).split('/')

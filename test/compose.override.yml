@@ -1,5 +1,5 @@
-# Runs the nc2oc test env's OpenCloud on an oc-custom image, with a branding
-# folder. Added to the test env's compose files by test/use-custom.
+# Runs the test environment's OpenCloud on an oc-custom image, with a branding
+# folder. Added to the test environment's compose files by test/use-custom.
 services:
   opencloud:
     image: ${OC_CUSTOM_IMAGE:?set OC_CUSTOM_IMAGE}

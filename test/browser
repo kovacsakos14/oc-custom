@@ -1,13 +1,16 @@
 #!/usr/bin/env bash
-# Runs test/browser.js against the test env's OpenCloud: signs in as each user
-# in a fresh browser profile and records the sign-in page and where they land.
-#   test/browser OUT_DIR admin:password dave:password
-#   ACTIONS="dave:Dave/readme.txt" test/browser …   # also list the file's actions
+# Runs test/browser.js against the test OpenCloud (OC_URL in test/local.env):
+# signs in as each user in a fresh browser profile and records the sign-in
+# page and where they land.
+#   test/browser OUT_DIR admin:password client1:password
+#   ACTIONS="client1:Client folder/readme.txt" test/browser …   # also list the file's actions
 set -euo pipefail
 
 here="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck source=lib.sh
+source "$here/lib.sh"
 out="$(mkdir -p "$1" && cd "$1" && pwd)"
 shift
 docker run --rm --network host -u "$(id -u):$(id -g)" -v "$here:/usr/src/app/t:ro" -v "$out:/out" \
-    -e BASE="${BASE:-https://localhost:9200}" -e USERS="$*" -e ACTIONS="${ACTIONS:-}" \
+    -e BASE="${BASE:-$OC_URL}" -e USERS="$*" -e ACTIONS="${ACTIONS:-}" \
     zenika/alpine-chrome:with-puppeteer node /usr/src/app/t/browser.js

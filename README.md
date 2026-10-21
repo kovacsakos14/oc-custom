@@ -79,7 +79,7 @@ OpenCloud merges `themes/_branding/theme.json` over its own theme on every reque
 - **Colours:** `clients.web.themes` holds the light and dark theme. It's a list, and a list replaces upstream's as a whole, so copy both entries, as `theme.colors.example.json` does, and change the `primary`/`chrome` tokens. A theme entry can also set its own `logo` (the example uses the white logo in dark mode).
 - **The sign-in page's background** is an environment setting rather than a theme key: `IDP_LOGIN_BACKGROUND_URL=/themes/_branding/background.jpg` (put the file in the folder). It replaces upstream's background and hexagon.
 - **The sign-in page keys are ours** (patch 5): upstream's sign-in page ignores the theme apart from the logo. Colours accept CSS colour values (`#rrggbb`, `rgb(…)`, names). Keys you leave out keep upstream's look.
-- **Read-only mount:** the folder is the only source of truth. OpenCloud's own logo upload API (`/branding/logo`, which the 7.2 web UI doesn't use) can't change it. nc2oc's Manage section is meant to write this folder over SSH.
+- **Read-only mount:** the folder is the only source of truth. OpenCloud's own logo upload API (`/branding/logo`, which the 7.2 web UI doesn't use) can't change it. Edit it on the host (for example over SSH, by hand or with a management tool); the container only reads it.
 - **Source link (AGPL):** link this repository from the imprint page, or add another entry under `common.urls`.
 
 ## Building
@@ -130,9 +130,9 @@ OpenCloud doesn't refuse to run an older version, but upgrades can be one-way: s
 - **Minor or major upgrades** (7.2 → 8.x) are one-way. Before upgrading, stop the container and snapshot or copy `/var/lib/opencloud` and `/etc/opencloud`. To roll back, restore both together with the old tag. Anything users changed since the upgrade is lost by the restore.
 
 ## Testing
-Tested in nc2oc's test environment (`~/dev/nc2oc-migration/test-env`):
-- The test env itself runs `oc-custom:7.2.4-1` by default (its `OC_IMAGE` and `OC_BRANDING` settings). `test/use-custom <image> [branding dir]` runs its OpenCloud on another image, with a branding folder (default `branding/example`), until its next `up.sh`; `test/use-custom --official` runs upstream's image of the same version.
-- `test/browser <out dir> user:password …` signs in as each user in a fresh browser profile. It saves screenshots and records where they landed and whether files show as a table. With `ACTIONS="dave:Dave/readme.txt"` it also opens that file's context menu and lists its actions (rename, move, delete…).
+Builds are tested in a separate OpenCloud test environment (Docker Compose, not part of this repo) with test users of each role and folder shares of each kind. The helpers in `test/` work with any such environment: copy `test/local.env.example` to `test/local.env` (gitignored) and set its compose command, URL and admin app token.
+- `test/use-custom <image> [branding dir]` runs the test environment's OpenCloud on another image, with a branding folder (default `branding/example`); `test/use-custom --official` runs upstream's image of the same version without branding.
+- `test/browser <out dir> user:password …` signs in as each user in a fresh browser profile. It saves screenshots and records where they landed and whether files show as a table. With `ACTIONS="client1:Client folder/readme.txt"` it also opens that file's context menu and lists its actions (rename, move, delete…).
 - `test/check-permissions <user> <share>` lists what OpenCloud reports for each item in a share (`oc:permissions`) as the recipient sees it. A "Can upload" share shows `NV`, with no `D` or `W`.
 - `scripts/smoke-test <image>` starts an image with a fresh config and checks the version, the branding and the web UI (CI runs it on every build).
 
@@ -142,7 +142,7 @@ Tested in nc2oc's test environment (`~/dev/nc2oc-migration/test-env`):
 - **Can view and Can edit shares:** unchanged.
 - **A fresh browser:** files show as a table. A User Light account lands on "Shared with me"; a User lands on their personal files.
 - **The branding:** it shows on the sign-in page and in the web UI. Without a branding folder, the sign-in page looks like upstream's.
-- **nc2oc's own tests still pass:** `verify.sh`, `ui-e2e.sh`, `manage-e2e.sh`.
+- **The test environment's own end-to-end tests still pass** (migration, user and share management).
 
 ## Layout
 - `versions.env`: the upstream versions, the base image and our build number.
@@ -154,17 +154,17 @@ Tested in nc2oc's test environment (`~/dev/nc2oc-migration/test-env`):
 - `scripts/build-native`, `Dockerfile`: the build.
 - `scripts/smoke-test`: the image check.
 - `branding/example`: an example branding folder.
-- `test/`: the test env helpers.
+- `test/`: the test helpers (`local.env.example` for your test environment).
 - `CLAUDE.md`: working notes for continuing development (decisions, findings, next steps).
 
 ## Status
-**Released:** `7.2.4-1` (2026-10-21), OpenCloud 7.2.4 with patches 1–5. Tested in nc2oc's test environment:
+**Released:** `7.2.4-1` (2026-10-21), OpenCloud 7.2.4 with patches 1–5. Tested:
 - what a "Can upload" recipient is told and can do (rename and move yes, delete no);
 - public upload links unchanged;
 - landing pages and the table view in a fresh browser;
 - the context menu actions;
 - the branding on the sign-in page and in the web UI;
-- nc2oc's migration check (`verify.sh`) and its Manage test (`manage-e2e.sh`).
+- the test environment's end-to-end tests (migration, user and share management).
 
 **Upstream compatibility** (`scripts/compat`, 2026-10-21):
 
@@ -176,7 +176,6 @@ Tested in nc2oc's test environment (`~/dev/nc2oc-migration/test-env`):
 **Next:**
 - **7.2.5:** decide whether it's worth a rebuild once it's released.
 - **The next production release** (due mid-November 2026, probably 8.x): rebase `web/0003`, test it, and snapshot servers before upgrading, since 7.2 → 8 is one-way.
-- **Editing the branding** from nc2oc's Manage section is planned there.
 
 ## Licence
 - **Upstream:** OpenCloud's server and reva are Apache-2.0; OpenCloud Web is AGPL-3.0.

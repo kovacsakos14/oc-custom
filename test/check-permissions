@@ -1,17 +1,19 @@
 #!/usr/bin/env bash
 # Lists what OpenCloud reports to the apps (oc:permissions) for the items in a
-# share, as the recipient sees them, in the nc2oc test env. Signs in as the user
-# through an impersonation token of the test env's admin app token, and removes
-# its impersonation tokens afterwards.
-#   test/check-permissions dave Dave
+# share, as the recipient sees them. Signs in as the user through an
+# impersonation token of the admin app token (OC_URL and OC_ADMIN_TOKEN in
+# test/local.env), and removes its impersonation tokens afterwards.
+#   test/check-permissions client1 "Client folder"
 # Letters: S shared, R reshare, M mounted, D delete, NV rename/move,
 # W write (files), CK create (folders).
 set -euo pipefail
 
-env_dir="${NC2OC_TEST_ENV:-$HOME/dev/nc2oc-migration/test-env}"
+# shellcheck source=lib.sh
+source "$(cd "$(dirname "$0")" && pwd)/lib.sh"
+need OC_ADMIN_TOKEN
 user="$1" share="$2"
-O=https://localhost:9200
-admin_token=$(sed -n 's/^OC_APP_TOKEN=//p' "$env_dir/.env" | tr -d '"') # .env quotes it
+O="$OC_URL"
+admin_token="$OC_ADMIN_TOKEN"
 
 token=$(curl -fsk -u "admin:$admin_token" -X POST "$O/auth-app/tokens?expiry=10m&userName=$user" | jq -r .token)
 cleanup() { # only impersonation tokens: the user may have tokens of their own

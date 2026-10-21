@@ -2,3 +2,7 @@
 /upstream/
 # Build output (scripts/build-native)
 /out/
+# Test settings for your own test environment (test/local.env.example)
+/test/local.env
+# Private working notes
+/CLAUDE.local.md
