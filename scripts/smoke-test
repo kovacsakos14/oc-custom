@@ -28,13 +28,17 @@ fail() { echo "FAIL: $*" >&2; docker logs --tail 30 "$name" >&2; exit 1; }
 
 status="$(curl -fsk "$url/status.php")" || fail "status.php doesn't answer"
 want="${OC_VERSION#v}+custom.$BUILD"
-echo "$status" | grep -q "\"productversion\": *\"$want\"" || fail "expected version $want in $status"
+grep -q "\"productversion\": *\"$want\"" <<<"$status" || fail "expected version $want in $status"
 echo "ok  version $want"
 
 theme="$(curl -fsk "$url/themes/opencloud/theme.json")" || fail "no theme.json"
-echo "$theme" | grep -q '"name":"Acme Files"' || fail "the branding's name isn't in theme.json"
-curl -fsk "$url/themes/_branding/logo.svg" | grep -q '<svg' || fail "the branding's logo isn't served"
+grep -q '"name":"Acme Files"' <<<"$theme" || fail "the branding's name isn't in theme.json"
+# Responses are read whole first: grep -q stops early, and under pipefail
+# curl's broken pipe would count as a failure
+logo="$(curl -fsk "$url/themes/_branding/logo.svg")" || fail "the branding's logo isn't served"
+grep -q '<svg' <<<"$logo" || fail "the branding's logo isn't an SVG"
 echo "ok  branding"
 
-curl -fsk "$url/" | grep -qi '<html' || fail "the web UI isn't served"
+page="$(curl -fsk "$url/")" || fail "the web UI doesn't answer"
+grep -qi '<html' <<<"$page" || fail "the web UI isn't served: ${page:0:200}"
 echo "ok  web UI"
