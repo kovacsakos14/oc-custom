@@ -15,7 +15,10 @@ NC_DB=$(sed -n 's/^NC_DB=//p' "$env_dir/.env")
 files=(-f "$env_dir/compose.yaml" -f "$env_dir/db-${NC_DB:-postgres}.yaml")
 
 if [ "$1" = "--official" ]; then
-    docker compose --env-file "$env_dir/.env" "${files[@]}" up -d opencloud
+    # The test env runs oc-custom by default (OC_IMAGE); this picks upstream's
+    # image of our version, without branding
+    OC_IMAGE="opencloudeu/opencloud:$(sed -n 's/^OC_VERSION=v//p' "$repo/versions.env")" \
+        docker compose --env-file "$env_dir/.env" "${files[@]}" up -d opencloud
     exit
 fi
 export OC_CUSTOM_IMAGE="$1"

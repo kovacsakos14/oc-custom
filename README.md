@@ -131,7 +131,7 @@ OpenCloud doesn't refuse to run an older version, but upgrades can be one-way: s
 
 ## Testing
 Tested in nc2oc's test environment (`~/dev/nc2oc-migration/test-env`):
-- `test/use-custom <image> [branding dir]` runs its OpenCloud on another image, with a branding folder (default `branding/example`); `test/use-custom --official` switches back.
+- The test env itself runs `oc-custom:7.2.4-1` by default (its `OC_IMAGE` and `OC_BRANDING` settings). `test/use-custom <image> [branding dir]` runs its OpenCloud on another image, with a branding folder (default `branding/example`), until its next `up.sh`; `test/use-custom --official` runs upstream's image of the same version.
 - `test/browser <out dir> user:password …` signs in as each user in a fresh browser profile. It saves screenshots and records where they landed and whether files show as a table. With `ACTIONS="dave:Dave/readme.txt"` it also opens that file's context menu and lists its actions (rename, move, delete…).
 - `test/check-permissions <user> <share>` lists what OpenCloud reports for each item in a share (`oc:permissions`) as the recipient sees it. A "Can upload" share shows `NV`, with no `D` or `W`.
 - `scripts/smoke-test <image>` starts an image with a fresh config and checks the version, the branding and the web UI (CI runs it on every build).

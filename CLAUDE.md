@@ -8,7 +8,7 @@ Context for working on this repo. User-facing docs are in README.md; this file h
 2. **Check the state:**
    - `git log --oneline -5`, `git status`: the working tree was clean, everything pushed to `origin` (GitHub, **public**: `kovacsakos14/oc-custom`). The release tag is `v7.2.4-1` (signed).
    - `gh run list -L 3`: the release build of `v7.2.4-1` passed and published `ghcr.io/kovacsakos14/oc-custom:7.2.4-1` (digest `sha256:e9b56fe7…`, public, pulls without login).
-   - `docker inspect nc2oc-opencloud --format '{{.Config.Image}}'`: the nc2oc test env's OpenCloud was left on `ghcr.io/kovacsakos14/oc-custom:7.2.4-1`. `test/use-custom --official` switches it back.
+   - `docker inspect nc2oc-opencloud --format '{{.Config.Image}}'`: the nc2oc test env's OpenCloud runs `ghcr.io/kovacsakos14/oc-custom:7.2.4-1` by default since 2026-10-21 (its `OC_IMAGE`/`OC_BRANDING` in `.env`, kept across resets). `test/use-custom <image>` swaps it until the next `up.sh`; `test/use-custom --official` runs upstream's 7.2.4.
    - `scripts/fetch` reports whether `upstream/` (gitignored) is still at the pinned tags. Its clones have the patches applied, plus build leftovers (IDP assets, `node_modules`).
 3. **What's next is the user's choice; ask which.** Talk it through first. Commit at each logical step with Conventional Commits; push when a step is done. See "Next steps" below.
 
