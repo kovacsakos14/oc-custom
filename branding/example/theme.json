@@ -11,7 +11,7 @@
   "clients": {
     "web": {
       "defaults": {
-        "logo": "themes/_branding/logo.svg",
+        "logo": "themes/_branding/logo-white.svg",
         "logoMobile": "themes/_branding/logo-mobile.svg",
         "favicon": "themes/_branding/favicon.svg"
       }
