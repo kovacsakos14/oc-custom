@@ -2,12 +2,12 @@
 
 Context for working on this repo. User-facing docs are in README.md; this file holds what a new session needs and can't easily derive from the code. **This repo is public:** notes about the private test environment, the tools around it and the plan files are in `CLAUDE.local.md` (gitignored); read it too when it exists, and keep such details out of committed files.
 
-## Resuming in a new session (state at the end of 2026-10-21: 7.2.4-1 released, nothing in progress)
+## Resuming in a new session (state at the end of 2026-10-21: 7.2.4-2 released, nothing in progress)
 
 1. **Read** this file and `CLAUDE.local.md` (the plan file and the test environment are named there).
 2. **Check the state:**
-   - `git log --oneline -5`, `git status`: the working tree was clean, everything pushed to `origin` (GitHub, **public**: `kovacsakos14/oc-custom`). The release tag is `v7.2.4-1` (signed).
-   - `gh run list -L 3`: the release build of `v7.2.4-1` passed and published `ghcr.io/kovacsakos14/oc-custom:7.2.4-1` (digest `sha256:e9b56fe7…`, public, pulls without login).
+   - `git log --oneline -5`, `git status`: the working tree was clean, everything pushed to `origin` (GitHub, **public**: `kovacsakos14/oc-custom`). The latest release tag is `v7.2.4-2` (signed; `v7.2.4-1` before it).
+   - `gh run list -L 3`: the release build of `v7.2.4-2` passed and published `ghcr.io/kovacsakos14/oc-custom:7.2.4-2` (digest `sha256:10f039a2…`, public, pulls without login). `7.2.4-1` (`sha256:e9b56fe7…`) is the previous one.
    - The test environment (`test/local.env`, see `CLAUDE.local.md`): `test/use-custom <image>` swaps its OpenCloud's image, `--official` runs upstream's.
    - `scripts/fetch` reports whether `upstream/` (gitignored) is still at the pinned tags. Its clones have the patches applied, plus build leftovers (IDP assets, `node_modules`).
 3. **What's next is the user's choice; ask which.** Talk it through first. Commit at each logical step with Conventional Commits; push when a step is done. See "Next steps" below.
@@ -51,14 +51,14 @@ Context for working on this repo. User-facing docs are in README.md; this file h
   - the Can upload recipient's context menu has Move to and Rename, no Delete; a Can edit recipient's also has Delete;
   - the branding shows on the sign-in page and in the web UI; without it, the sign-in page looks like upstream's.
 - **The test environment's end-to-end tests** pass on it (details in `CLAUDE.local.md`).
+- **7.2.4-2 (sign-in background image):** tested through `IDP_ASSET_PATH` and then on the released image with `test/browser`. The theme's image shows and the hexagon goes; `IDP_LOGIN_BACKGROUND_URL` still wins; without branding the page is upstream's. The rest of 7.2.4-2 is 7.2.4-1 unchanged (only `patches/server/0001` changed).
 - **CI:**
   - build ~8 min cold, ~3 min with caches;
-  - the smoke test checks the version, the branding and the web UI;
+  - the smoke test checks the version, the branding (including the background image) and the web UI;
   - `scripts/compat`: all patches apply to v7.2.4 and stable-7.2 (7.2.5); on v8.1.0 only `web/0003` (DriveRedirect) conflicts.
 
 ## Next steps
 - **The branding editor** is built outside this repo (see `CLAUDE.local.md`). This repo only owns the folder's format: if a change here adds or renames `theme.json` keys, update the README "Branding" and say so in `CLAUDE.local.md`.
-- **Requested: a sign-in background image from the branding folder** (a `common.signin.backgroundImage` theme key in patch 5, build `7.2.4-2`); the plan has the details.
 - **7.2.5:** release PR #3614 is pending upstream. When it's out, decide whether it's worth a rebuild (it's a thumbnails fix plus reindex backports).
 - **The November production release** (due 2026-11-17, probably 8.2):
   - rebase `web/0003` (DriveRedirect changed in 8.x);
@@ -66,4 +66,4 @@ Context for working on this repo. User-facing docs are in README.md; this file h
   - snapshot before upgrading: 7.2 → 8 is one-way.
 - **Optionally:**
   - report upstream that the server allows MOVE for "Can upload" but doesn't report `NV`;
-  - deploy `7.2.4-1` to a first customer server. Check the compose paths against a real production compose file and remove any nginx redirect workaround for User Light (patch 4 replaces it).
+  - deploy `7.2.4-2` to a first customer server. Check the compose paths against a real production compose file and remove any nginx redirect workaround for User Light (patch 4 replaces it).

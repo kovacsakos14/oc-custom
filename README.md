@@ -31,7 +31,7 @@ Compared with a compose file for the official image, two lines change:
 ```yaml
 services:
   opencloud:
-    image: ghcr.io/kovacsakos14/oc-custom:7.2.4-1   # was: opencloudeu/opencloud:7.2.4
+    image: ghcr.io/kovacsakos14/oc-custom:7.2.4-2   # was: opencloudeu/opencloud:7.2.4
     volumes:
       - ./config:/etc/opencloud
       - ./data:/var/lib/opencloud
@@ -163,7 +163,9 @@ Builds are tested in a separate OpenCloud test environment (Docker Compose, not 
 - `CLAUDE.md`: working notes for continuing development (decisions, findings, next steps).
 
 ## Status
-**Released:** `7.2.4-1` (2026-10-21), OpenCloud 7.2.4 with patches 1–5. Tested:
+**Released:** `7.2.4-2` (2026-10-21): adds the sign-in background image (`common.signin.backgroundImage`) to patch 5; otherwise the same as `7.2.4-1`.
+
+`7.2.4-1` (2026-10-21), OpenCloud 7.2.4 with patches 1–5. Tested:
 - what a "Can upload" recipient is told and can do (rename and move yes, delete no);
 - public upload links unchanged;
 - landing pages and the table view in a fresh browser;
