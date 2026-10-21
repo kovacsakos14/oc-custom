@@ -34,13 +34,17 @@ jobs:
           fi
           echo "image=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/oc-custom:$tag" >>"$GITHUB_OUTPUT"
           echo "web=web-$WEB_VERSION-${{ hashFiles('patches/web/*.patch') }}" >>"$GITHUB_OUTPUT"
+      # Caches speed up manual test builds only. A release (tag) builds from
+      # nothing, so no cache another run wrote can end up in it.
       # The patched web: rebuilt only when its version or patches change
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        if: github.ref_type != 'tag'
         with:
           path: out/web-dist
           key: ${{ steps.tag.outputs.web }}
       # pnpm store, Go modules and build cache
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        if: github.ref_type != 'tag'
         with:
           path: ~/.cache/oc-custom
           key: build-${{ hashFiles('versions.env', 'patches/**') }}-${{ github.run_id }}
