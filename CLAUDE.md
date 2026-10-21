@@ -53,7 +53,7 @@ Context for working on this repo. User-facing docs are in README.md; this file h
 - **The test environment's end-to-end tests** pass on it (details in `CLAUDE.local.md`).
 - **7.2.4-2 (sign-in background image):** tested through `IDP_ASSET_PATH` and then on the released image with `test/browser`. The theme's image shows and the hexagon goes; `IDP_LOGIN_BACKGROUND_URL` still wins; without branding the page is upstream's. The rest of 7.2.4-2 is 7.2.4-1 unchanged (only `patches/server/0001` changed).
 - **CI:**
-  - build ~8 min cold, ~3 min with caches;
+  - build ~8 min cold, ~3 min with caches (manual runs only: since 2026-10-21 releases build without caches, and the node image and pnpm are pinned by digest/hash; untested in CI until the next build);
   - the smoke test checks the version, the branding (including the background image) and the web UI;
   - `scripts/compat`: all patches apply to v7.2.4 and stable-7.2 (7.2.5); on v8.1.0 only `web/0003` (DriveRedirect) conflicts.
 

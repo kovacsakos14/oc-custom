@@ -82,7 +82,7 @@ OpenCloud merges `themes/_branding/theme.json` over its own theme on every reque
 
 - **Logos** are SVG or PNG files in the same folder, referenced as `themes/_branding/<file>`.
 - **Colours:** `clients.web.themes` holds the light and dark theme. It's a list, and a list replaces upstream's as a whole, so copy both entries, as `theme.colors.example.json` does, and change the `primary`/`chrome` tokens. A theme entry can also set its own `logo` (the example uses the white logo in dark mode).
-- **The sign-in page's background image** (`common.signin.backgroundImage`): a file in the folder, referenced like the logos, or an `https://` URL. It covers the page (scaled to fill, centred) and replaces the hexagon; `common.signin.background` still shows while it loads, so pick a matching colour. Use a JPEG or WebP of about 1920×1080 and a few hundred KB. Remove the key to get the plain background back. Upstream's environment setting `IDP_LOGIN_BACKGROUND_URL` still works and wins over the key.
+- **The sign-in page's background image** (`common.signin.backgroundImage`): a file in the folder, referenced like the logos. Only paths on the server itself are used (since the build after 7.2.4-2; no `https://` URLs, `%` escapes or `..`), so the sign-in page loads nothing from other sites; the same goes for the favicon. For an image elsewhere, upstream's `IDP_LOGIN_BACKGROUND_URL` still works. It covers the page (scaled to fill, centred) and replaces the hexagon; `common.signin.background` still shows while it loads, so pick a matching colour. Use a JPEG or WebP of about 1920×1080 and a few hundred KB. Remove the key to get the plain background back. Upstream's environment setting `IDP_LOGIN_BACKGROUND_URL` still works and wins over the key.
 - **The sign-in page keys are ours** (patch 5): upstream's sign-in page ignores the theme apart from the logo. Colours accept CSS colour values (`#rrggbb`, `rgb(…)`, names). Keys you leave out keep upstream's look.
 - **Read-only mount:** the folder is the only source of truth. OpenCloud's own logo upload API (`/branding/logo`, which the 7.2 web UI doesn't use) can't change it. Edit it on the host (for example over SSH, by hand or with a management tool); the container only reads it.
 - **Source link (AGPL):** link this repository from the imprint page, or add another entry under `common.urls`.
@@ -94,11 +94,11 @@ The build needs more memory than a small VM has (the Go link step alone takes se
 
 `scripts/build-native` is what CI runs, and it works on any machine with Docker and about 8 GB of RAM:
 1. Fetch the upstream sources at the pinned versions and apply the patches.
-2. Build the patched web, cached in `out/web-dist` and rebuilt only when its version or patches change.
+2. Build the patched web, cached in `out/web-dist` and rebuilt only when its version or patches change. Every build image is pinned by digest, and pnpm by version and hash (`PNPM_VERSION`, `PNPM_SHA512` in `versions.env`; the build adds the hash to the web's `packageManager`, so corepack checks the download, and stops if upstream pins another pnpm).
 3. Build the IDP frontend (patched), then the server binary in upstream's `golang-ci` image with the official image's target (`release-linux-docker-amd64`, libvips). The server vendors its dependencies, so the reva patches go into its vendored reva (the same version as `REVA_VERSION`).
 4. Copy the binary into the official image (`Dockerfile`), and check that it runs and finds its libraries.
 
-Caches (pnpm store, Go modules and build cache) are kept between CI runs. Only amd64 is built.
+Manual runs keep caches (pnpm store, Go modules and build cache, the web) between runs; a release (tag) builds from nothing, so nothing another run left in a cache can end up in it. Only amd64 is built.
 
 ## Updating to a new OpenCloud release
 **Which releases to follow.** OpenCloud has three kinds (see their [release lifecycle](https://docs.opencloud.eu/docs/admin/resources/lifecycle)):

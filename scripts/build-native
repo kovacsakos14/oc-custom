@@ -16,7 +16,8 @@ cache="${OC_CUSTOM_CACHE:-$HOME/.cache/oc-custom}"
 up="$repo/upstream"
 mkdir -p "$cache"/{pnpm,go-mod,go-build} "$repo/out"
 
-NODE_IMAGE=node:24-alpine
+# Pinned by digest like the others: it builds the web that goes into the binary
+NODE_IMAGE=node:24-alpine@sha256:6a1c190e17215d844926b0677f4bf87273ff7d5e54db06d3b5b5863ab0b09a3d # Node 24.22.1
 NODE_CI_IMAGE=quay.io/opencloudeu/nodejs-ci:24@sha256:4133e457d46874781ab84cf74b61055eec921b486c44eb2e8881a80ca171cd1a
 GO_CI_IMAGE=quay.io/opencloudeu/golang-ci:1.25@sha256:49ec402d6bdf36211306b7bdb2830555c9365dfa3cb12f833604fc742871fef5
 
@@ -39,8 +40,17 @@ web_dist="$repo/out/web-dist"
 if [ "$(cat "$web_dist/.oc-custom-key" 2>/dev/null)" = "$web_key" ]; then
     echo "web: out/web-dist is up to date ($web_key)"
 else
+    # corepack checks the pnpm it downloads against the hash in packageManager;
+    # upstream names the version only, so the hash is added for the build
+    pkg="$up/web/package.json"
+    grep -q "\"packageManager\": \"pnpm@$PNPM_VERSION\"" "$pkg" ||
+        { echo "web: package.json doesn't pin pnpm@$PNPM_VERSION; update PNPM_VERSION and PNPM_SHA512 in versions.env" >&2; exit 1; }
+    sed -i "s/\"packageManager\": \"pnpm@$PNPM_VERSION\"/\"packageManager\": \"pnpm@$PNPM_VERSION+sha512.$PNPM_SHA512\"/" "$pkg"
+    trap 'git -C "$up/web" checkout -q -- package.json' EXIT
     run "$NODE_IMAGE" web 'mkdir -p /tmp/bin && corepack enable --install-directory /tmp/bin && export PATH=/tmp/bin:$PATH &&
         pnpm install --frozen-lockfile && pnpm build && cp config/config.json.dist dist/'
+    git -C "$up/web" checkout -q -- package.json
+    trap - EXIT
     rm -rf "$web_dist"
     cp -r "$up/web/dist" "$web_dist"
     echo "$web_key" > "$web_dist/.oc-custom-key"

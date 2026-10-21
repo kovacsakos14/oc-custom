@@ -110,10 +110,10 @@ index f6fd9319..37dfadfe 100644
  }
 diff --git a/services/idp/src/branding.js b/services/idp/src/branding.js
 new file mode 100644
-index 00000000..2cd164a2
+index 00000000..361068e7
 --- /dev/null
 +++ b/services/idp/src/branding.js
-@@ -0,0 +1,69 @@
+@@ -0,0 +1,77 @@
 +// oc-custom: lets the sign-in page follow the instance's theme (theme.json,
 +// including themes/_branding). Without branding everything stays as upstream:
 +// the CSS variables default to the original colours in app.css.
@@ -124,8 +124,13 @@ index 00000000..2cd164a2
 +//   common.signin.accent             the button, the input focus ring, the hexagon
 +//   common.signin.onAccent           the button's text
 +//   common.signin.footer             the footer text ("" hides it)
-+//   common.signin.backgroundImage    a background picture, instead of the
-+//                                    hexagon (IDP_LOGIN_BACKGROUND_URL wins)
++//   common.signin.backgroundImage    a background picture on this server
++//                                    (e.g. themes/_branding/background.jpg),
++//                                    instead of the hexagon
++//                                    (IDP_LOGIN_BACKGROUND_URL wins)
++//
++// Images are files on this server only: the sign-in page loads nothing
++// from other sites because of the theme.
 +
 +const colorVariables = {
 +  background: '--oc-signin-background',
@@ -142,10 +147,10 @@ index 00000000..2cd164a2
 +    document.title = `Sign in - ${name}`;
 +  }
 +
-+  const favicon = theme?.clients?.web?.defaults?.favicon;
++  const favicon = serverPath(theme?.clients?.web?.defaults?.favicon);
 +  const icon = document.querySelector('link[rel~="icon"]');
 +  if (favicon && icon) {
-+    icon.setAttribute('href', '/' + favicon.replace(/^\/+/, ''));
++    icon.setAttribute('href', favicon);
 +    icon.removeAttribute('type');
 +  }
 +
@@ -164,24 +169,27 @@ index 00000000..2cd164a2
 +  return typeof footer === 'string' ? footer : undefined;
 +}
 +
-+// Only plain paths or https URLs: the value ends up in a CSS url()
-+const imagePathPattern = /^[\w\-./%~]+$/;
-+const imageUrlPattern = /^https:\/\/[\w\-./%~:@?=&+]+$/;
++// A plain path on this server: no other sites, no escapes (%2e%2e is ".."
++// to a browser), no ".." segments. The value ends up in a CSS url() and a
++// link href.
++const pathPattern = /^[\w\-./~]+$/;
 +
-+// The background image URL from the theme, or undefined for none
-+export function signinBackgroundImage(theme) {
-+  const image = theme?.common?.signin?.backgroundImage;
-+  if (typeof image !== 'string' || image.trim() === '') {
++// serverPath returns value as an absolute path on this server, or undefined
++// when it isn't a plain path.
++export function serverPath(value) {
++  if (typeof value !== 'string') {
 +    return undefined;
 +  }
-+  const value = image.trim();
-+  if (imageUrlPattern.test(value)) {
-+    return value;
++  const path = value.trim().replace(/^\/+/, '');
++  if (path === '' || !pathPattern.test(path) || path.split('/').some((s) => s === '.' || s === '..')) {
++    return undefined;
 +  }
-+  if (imagePathPattern.test(value) && !value.split('/').includes('..')) {
-+    return '/' + value.replace(/^\/+/, '');
-+  }
-+  return undefined;
++  return '/' + path;
++}
++
++// The background image's path from the theme, or undefined for none
++export function signinBackgroundImage(theme) {
++  return serverPath(theme?.common?.signin?.backgroundImage);
 +}
 diff --git a/services/idp/src/components/ResponsiveScreen.jsx b/services/idp/src/components/ResponsiveScreen.jsx
 index 86c3eba0..ce9c4a34 100644
