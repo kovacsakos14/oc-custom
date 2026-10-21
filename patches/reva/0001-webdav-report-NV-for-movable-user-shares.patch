@@ -14,14 +14,22 @@ index 508b091..21e71ea 100644
  	}
  	if isDir && r.ocsPermissions.Contain(PermissionCreate) {
  		fmt.Fprintf(&b, "CK")
-diff --git a/pkg/conversions/role_test.go b/pkg/conversions/role_test.go
-index c087e29..22a92fe 100644
---- a/pkg/conversions/role_test.go
-+++ b/pkg/conversions/role_test.go
-@@ -120,3 +120,21 @@ func TestSufficientPermissions(t *testing.T) {
- 		assert.Equal(t, test.Sufficient, SufficientCS3Permissions(test.Existing, test.Requested))
- 	}
- }
+diff --git a/pkg/conversions/role_custom_test.go b/pkg/conversions/role_custom_test.go
+new file mode 100644
+index 0000000..d0bc495
+--- /dev/null
++++ b/pkg/conversions/role_custom_test.go
+@@ -0,0 +1,28 @@
++package conversions
++
++// oc-custom: tests for the oc-custom change in WebDAVPermissions, in their own
++// file so the patch doesn't conflict with upstream changes to role_test.go.
++
++import (
++	"testing"
++
++	"github.com/stretchr/testify/assert"
++)
 +
 +func TestWebDAVPermissionsMoveWithoutWrite(t *testing.T) {
 +	editorLite := RoleFromResourcePermissions(NewEditorLiteRole().CS3ResourcePermissions(), false)
