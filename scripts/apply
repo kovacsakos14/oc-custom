@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+# Applies patches/reva and patches/web to the clones in upstream/ (run
+# scripts/fetch first). Patches already applied are skipped, so it can run
+# again after adding a patch. A patch that doesn't apply cleanly is merged with
+# --3way, leaving conflict markers to fix by hand.
+set -euo pipefail
+
+repo="$(cd "$(dirname "$0")/.." && pwd)"
+
+for part in reva web; do
+    dir="$repo/upstream/$part"
+    for p in "$repo"/patches/"$part"/*.patch; do
+        [ -e "$p" ] || continue
+        name="$part/$(basename "$p")"
+        if git -C "$dir" apply --reverse --check "$p" 2>/dev/null; then
+            echo "$name: already applied"
+        elif git -C "$dir" apply --check "$p" 2>/dev/null; then
+            git -C "$dir" apply "$p"
+            echo "$name: applied"
+        else
+            git -C "$dir" apply --3way "$p" || { echo "$name: conflicts, fix them in upstream/$part" >&2; exit 1; }
+            echo "$name: applied with --3way, check the result"
+        fi
+    done
+done

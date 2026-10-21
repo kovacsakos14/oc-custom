@@ -1,0 +1,30 @@
+#!/usr/bin/env bash
+# Rewrites each patch in patches/ from the current changes in upstream/, after
+# fixing conflicts or editing a patched file there. Each patch is rewritten
+# from the files it already touches, so no two patches may touch the same file.
+# A new patch: git -C upstream/<part> diff -- <files> > patches/<part>/NNNN-name.patch
+set -euo pipefail
+
+repo="$(cd "$(dirname "$0")/.." && pwd)"
+
+for part in reva web; do
+    dir="$repo/upstream/$part"
+    for p in "$repo"/patches/"$part"/*.patch; do
+        [ -e "$p" ] || continue
+        mapfile -t files < <(sed -n 's|^diff --git a/\(.*\) b/.*|\1|p' "$p")
+        # New files (in a patch, not yet tracked upstream) need intent-to-add to show in git diff
+        git -C "$dir" add -N -- "${files[@]}"
+        git -C "$dir" diff -- "${files[@]}" > "$p.new"
+        if [ ! -s "$p.new" ]; then
+            rm "$p.new"
+            echo "$part/$(basename "$p"): no changes in upstream/$part, left as is" >&2
+            continue
+        fi
+        if cmp -s "$p" "$p.new"; then
+            rm "$p.new"
+        else
+            mv "$p.new" "$p"
+            echo "$part/$(basename "$p"): updated"
+        fi
+    done
+done

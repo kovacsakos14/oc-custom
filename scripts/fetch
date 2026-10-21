@@ -1,0 +1,41 @@
+#!/usr/bin/env bash
+# Clones the upstream sources at the versions in versions.env into upstream/
+# (server, reva, web). An existing clone is left alone when it's at the right
+# tag; --force resets it to the tag, dropping local changes.
+set -euo pipefail
+
+repo="$(cd "$(dirname "$0")/.." && pwd)"
+# shellcheck source=../versions.env
+source "$repo/versions.env"
+force=false
+[ "${1:-}" = "--force" ] && force=true
+
+fetch() { # name, github repo, tag
+    local dir="$repo/upstream/$1" url="https://github.com/$2.git" tag="$3"
+    if [ ! -d "$dir/.git" ]; then
+        git -c advice.detachedHead=false clone -q --depth 1 -b "$tag" "$url" "$dir"
+        echo "$1: cloned $tag"
+        return
+    fi
+    if [ "$(git -C "$dir" describe --tags --exact-match 2>/dev/null)" = "$tag" ] && ! $force; then
+        if [ -n "$(git -C "$dir" status --porcelain)" ]; then
+            echo "$1: at $tag, with local changes"
+        else
+            echo "$1: at $tag"
+        fi
+        return
+    fi
+    if ! $force && [ -n "$(git -C "$dir" status --porcelain)" ]; then
+        echo "$1: has local changes and isn't at $tag; rerun with --force to reset it" >&2
+        exit 1
+    fi
+    git -C "$dir" fetch -q --depth 1 origin tag "$tag"
+    git -C "$dir" -c advice.detachedHead=false checkout -q -f "$tag"
+    git -C "$dir" clean -qfd
+    echo "$1: reset to $tag"
+}
+
+mkdir -p "$repo/upstream"
+fetch server opencloud-eu/opencloud "$OC_VERSION"
+fetch reva opencloud-eu/reva "$REVA_VERSION"
+fetch web opencloud-eu/web "$WEB_VERSION"

@@ -1,0 +1,4 @@
+# Upstream sources at the pinned tags (scripts/fetch)
+/upstream/
+# Build output (scripts/build-native)
+/out/
