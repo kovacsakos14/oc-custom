@@ -1,0 +1,41 @@
+#!/usr/bin/env bash
+# Lists what OpenCloud reports to the apps (oc:permissions) for the items in a
+# share, as the recipient sees them, in the nc2oc test env. Signs in as the user
+# through an impersonation token of the test env's admin app token, and removes
+# its impersonation tokens afterwards.
+#   test/check-permissions dave Dave
+# Letters: S shared, R reshare, M mounted, D delete, NV rename/move,
+# W write (files), CK create (folders).
+set -euo pipefail
+
+env_dir="${NC2OC_TEST_ENV:-$HOME/dev/nc2oc-migration/test-env}"
+user="$1" share="$2"
+O=https://localhost:9200
+admin_token=$(sed -n 's/^OC_APP_TOKEN=//p' "$env_dir/.env" | tr -d '"') # .env quotes it
+
+token=$(curl -fsk -u "admin:$admin_token" -X POST "$O/auth-app/tokens?expiry=10m&userName=$user" | jq -r .token)
+cleanup() { # only impersonation tokens: the user may have tokens of their own
+    for id in $(curl -sk -u "$user:$token" "$O/auth-app/tokens" |
+        jq -r '.[] | select(.label == "Generated via API (Impersonation)") | .token'); do
+        curl -sk -o /dev/null -u "$user:$token" -X DELETE "$O/auth-app/tokens?token=$id"
+    done
+}
+trap cleanup EXIT
+
+id=$(curl -fsk -u "$user:$token" "$O/graph/v1beta1/me/drive/sharedWithMe" |
+    jq -r --arg n "$share" '.value[] | select(.name == $n) | .id')
+[ -n "$id" ] || { echo "$user has no share named $share" >&2; exit 1; }
+
+curl -fsk -u "$user:$token" -X PROPFIND -H 'Depth: 1' "$O/dav/spaces/$id" \
+    -d '<d:propfind xmlns:d="DAV:" xmlns:oc="http://owncloud.org/ns"><d:prop><oc:permissions/><d:resourcetype/></d:prop></d:propfind>' |
+    python3 -c '
+import sys, urllib.parse, xml.etree.ElementTree as ET
+ns = {"d": "DAV:", "oc": "http://owncloud.org/ns"}
+for r in ET.parse(sys.stdin).getroot().findall("d:response", ns):
+    href = urllib.parse.unquote(r.find("d:href", ns).text).rstrip("/")
+    name = href.rsplit("/", 1)[-1] if href.count("/") > 3 else "(share root)"
+    perms = r.find(".//oc:permissions", ns)
+    folder = r.find(".//d:resourcetype/d:collection", ns) is not None
+    text = perms.text if perms is not None and perms.text else "-"
+    print(text.ljust(8), name + ("/" if folder else ""))
+'

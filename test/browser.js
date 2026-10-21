@@ -48,6 +48,28 @@ async function main() {
         favicon: await page.$eval('link[rel~=icon]', (l) => l.getAttribute('href')).catch(() => null),
         logos: await page.$$eval('img', (imgs) => imgs.map((i) => i.getAttribute('src'))),
       }
+      // ACTIONS="dave:Dave/readme.txt": open the share, right-click the file and
+      // record the actions its context menu offers
+      for (const spec of (process.env.ACTIONS || '').split(' ').filter((s) => s.startsWith(user.name + ':'))) {
+        const [share, file] = spec.slice(user.name.length + 1).split('/')
+        // in-app, as a person would: page.goto doesn't settle inside the app
+        if (!(await page.evaluate(() => location.pathname.startsWith('/files/shares/with-me')))) {
+          await page.locator('a[href*="/files/shares/with-me"]').click()
+          await page.waitForFunction(() => location.pathname.startsWith('/files/shares/with-me'))
+        }
+        await page.locator(`[data-test-resource-name="${share}"]`).click()
+        await page.waitForSelector(`[data-test-resource-name="${file}"]`, { timeout: 30000 })
+        const row = await page.$(`tr:has([data-test-resource-name="${file}"])`)
+        await row.click({ button: 'right' })
+        await page.waitForSelector('#oc-files-context-menu', { timeout: 10000 })
+        await new Promise((r) => setTimeout(r, 1000))
+        await page.screenshot({ path: `/out/${user.name}-actions.png` })
+        result.users[user.name].actions = result.users[user.name].actions || {}
+        result.users[user.name].actions[`${share}/${file}`] = await page.$$eval(
+          '#oc-files-context-menu [class*="oc-files-actions-"][class*="-trigger"]',
+          (els) => els.map((e) => [...e.classList].find((c) => c.endsWith('-trigger')).replace(/^oc-files-actions-|-trigger$/g, ''))
+        )
+      }
     } finally {
       await browser.close()
     }
