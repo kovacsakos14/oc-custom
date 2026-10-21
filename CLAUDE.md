@@ -64,7 +64,7 @@ Context for working on this repo. User-facing docs are in README.md; this file h
   - `scripts/compat`: all patches apply to v7.2.4 and stable-7.2 (7.2.5); on v8.1.0 only `web/0003` (DriveRedirect) conflicts.
 
 ## Next steps
-- **The Branding page in nc2oc's Manage section** (the user decided it should live there): see "Follow-up" in the plan. It edits `theme.json`, including `common.signin.*`, and the logos over SSH; SVGs are sanitised.
+- **The Branding page in nc2oc's Manage section** is nc2oc work, done from a session in `~/dev/nc2oc-migration` (spec: "Branding page in Manage" in its plan). This repo only owns the folder's format: if a change here adds or renames `theme.json` keys, update the README "Branding" and tell that work.
 - **7.2.5:** release PR #3614 is pending upstream. When it's out, decide whether it's worth a rebuild (it's a thumbnails fix plus reindex backports).
 - **The November production release** (due 2026-11-17, probably 8.2):
   - rebase `web/0003` (DriveRedirect changed in 8.x);
