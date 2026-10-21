@@ -54,13 +54,16 @@ for ref in "$@"; do
     else
         echo "$ref: reva $reva, web $web"
     fi
-    for part in reva web; do
-        version="$reva"
-        [ "$part" = web ] && version="$web"
+    for part in server reva web; do
+        case "$part" in
+        server) version="$ref" upstream=opencloud ;;
+        reva) version="$reva" upstream=reva ;;
+        web) version="$web" upstream=web ;;
+        esac
+        ls "$repo"/patches/"$part"/*.patch >/dev/null 2>&1 || continue
         dir="$work/$part-$version"
-        [ -d "$dir" ] || checkout "opencloud-eu/$part" "$version" "$dir"
+        [ -d "$dir" ] || checkout "opencloud-eu/$upstream" "$version" "$dir"
         for p in "$repo"/patches/"$part"/*.patch; do
-            [ -e "$p" ] || continue
             if git -C "$dir" apply --check "$p" 2>/dev/null; then
                 echo "  ok        $part/$(basename "$p")"
             else

@@ -21,6 +21,7 @@ Based on OpenCloud **7.2.4** (reva v2.46.8, web v7.1.5); see `versions.env`. Ima
 | 2 | **The web UI's Move action needs only rename permission,** no longer delete permission too, so "Can upload" users get it. Drag and drop and cut/paste had no such check. Moving to another space is a copy, as before. | `patches/web/0001-…` |
 | 3 | **The table is the default file view** instead of tiles. Users who already picked a view keep it (it's stored in their browser). | `patches/web/0002-…` |
 | 4 | **Accounts without a personal space (User Light) land on "Shared with me"** instead of the empty Spaces list. Others are unchanged. | `patches/web/0003-…` |
+| 5 | **The sign-in page follows the branding:** its tab title, tab icon, colours and footer (see [Branding](#branding)). Without branding it looks exactly as upstream's. | `patches/server/0001-…` |
 
 Everything else is upstream's: the image is the official one with only `/usr/bin/opencloud` replaced, built from the same sources and with the same toolchain and target. `opencloud version` and `status.php` report `7.2.4+custom.<build>`.
 
@@ -50,7 +51,8 @@ OpenCloud merges `themes/_branding/theme.json` over its own theme on every reque
     "name": "Acme Files",
     "slogan": "Acme Files – file sharing for Acme",
     "logo": "themes/_branding/logo.svg",
-    "urls": { "imprint": "https://example.com/imprint", "privacy": "https://example.com/privacy" }
+    "urls": { "imprint": "https://example.com/imprint", "privacy": "https://example.com/privacy" },
+    "signin": { "background": "#431407", "accent": "#fb923c", "onAccent": "#431407", "footer": "Acme Files – file sharing for Acme" }
   },
   "clients": { "web": { "defaults": {
     "logo": "themes/_branding/logo-white.svg",
@@ -61,17 +63,21 @@ OpenCloud merges `themes/_branding/theme.json` over its own theme on every reque
 ```
 | Key | Where it shows |
 |---|---|
-| `common.logo` | The sign-in page (large, on a dark background) |
-| `common.name` | The browser tab title in the web UI ("Personal - Acme Files") |
+| `common.logo` | The sign-in page (large, on its background) |
+| `common.name` | The browser tab titles ("Sign in - Acme Files", "Personal - Acme Files") |
+| `common.signin.background` | The sign-in page's background colour |
+| `common.signin.accent` | The sign-in page's button, input focus ring and hexagon |
+| `common.signin.onAccent` | The text on the sign-in button |
+| `common.signin.footer` | The sign-in page's footer text (`""` hides it) |
 | `common.urls.imprint`, `.privacy` | Links in the web UI |
 | `clients.web.defaults.logo` | The top bar of the web UI (dark by default, so use a light logo) |
 | `clients.web.defaults.logoMobile` | The top bar on narrow screens |
-| `clients.web.defaults.favicon` | The browser tab icon in the web UI |
+| `clients.web.defaults.favicon` | The browser tab icon, on the sign-in page and in the web UI |
 
 - **Logos** are SVG or PNG files in the same folder, referenced as `themes/_branding/<file>`.
 - **Colours:** `clients.web.themes` holds the light and dark theme. It's a list, and a list replaces upstream's as a whole, so copy both entries, as `theme.colors.example.json` does, and change the `primary`/`chrome` tokens. A theme entry can also set its own `logo` (the example uses the white logo in dark mode).
 - **The sign-in page's background** is an environment setting rather than a theme key: `IDP_LOGIN_BACKGROUND_URL=/themes/_branding/background.jpg` (put the file in the folder). It replaces upstream's background and hexagon.
-- **Fixed on the sign-in page:** its tab title ("Sign in - OpenCloud"), tab icon, colours and footer ("OpenCloud - excellent file sharing") are built into OpenCloud's IDP and don't follow the theme. If the tab icon matters, the reverse proxy can serve your favicon at `/signin/v1/static/favicon.svg`.
+- **The sign-in page keys are ours** (patch 5): upstream's sign-in page ignores the theme apart from the logo. Colours accept CSS colour values (`#rrggbb`, `rgb(…)`, names). Keys you leave out keep upstream's look.
 - **Read-only mount:** the folder is the only source of truth. OpenCloud's own logo upload API (`/branding/logo`, which the 7.2 web UI doesn't use) can't change it. nc2oc's Manage section is meant to write this folder over SSH.
 - **Source link (AGPL):** link this repository from the imprint page, or add another entry under `common.urls`.
 
@@ -83,7 +89,7 @@ The build needs more memory than a small VM has (the Go link step alone takes se
 `scripts/build-native` is what CI runs, and it works on any machine with Docker and about 8 GB of RAM:
 1. Fetch the upstream sources at the pinned versions and apply the patches.
 2. Build the patched web, cached in `out/web-dist` and rebuilt only when its version or patches change.
-3. Build the IDP frontend, then the server binary in upstream's `golang-ci` image with the official image's target (`release-linux-docker-amd64`, libvips), reva replaced by the patched copy.
+3. Build the IDP frontend (patched), then the server binary in upstream's `golang-ci` image with the official image's target (`release-linux-docker-amd64`, libvips), reva replaced by the patched copy.
 4. Copy the binary into the official image (`Dockerfile`), and check that it runs and finds its libraries.
 
 Caches (pnpm store, Go modules and build cache) are kept between CI runs. Only amd64 is built.
@@ -133,12 +139,12 @@ Tested in nc2oc's test environment (`~/dev/nc2oc-migration/test-env`):
 - **A public upload link:** no rename/move.
 - **Can view and Can edit shares:** unchanged.
 - **A fresh browser:** files show as a table. A User Light account lands on "Shared with me"; a User lands on their personal files.
-- **The branding:** it shows on the sign-in page and in the web UI.
+- **The branding:** it shows on the sign-in page and in the web UI. Without a branding folder, the sign-in page looks like upstream's.
 - **nc2oc's own tests still pass:** `verify.sh`, `ui-e2e.sh`, `manage-e2e.sh`.
 
 ## Layout
 - `versions.env`: the upstream versions, the base image and our build number.
-- `patches/reva`, `patches/web`: the changes, as plain diffs. No two patches touch the same file.
+- `patches/server`, `patches/reva`, `patches/web`: the changes, as plain diffs. No two patches touch the same file.
 - `scripts/fetch`: clone upstream at those versions into `upstream/` (gitignored).
 - `scripts/apply`: apply the patches.
 - `scripts/refresh-patches`: rewrite the patches from `upstream/`.

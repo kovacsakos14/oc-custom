@@ -1,0 +1,192 @@
+diff --git a/services/idp/src/App.jsx b/services/idp/src/App.jsx
+index 315a5876..cf38778c 100644
+--- a/services/idp/src/App.jsx
++++ b/services/idp/src/App.jsx
+@@ -7,6 +7,7 @@ import muiTheme from './theme';
+ import Spinner from './components/Spinner';
+ import * as version from './version';
+ import {OpenCloudContext} from './openCloudContext';
++import {applyBranding} from './branding';
+ 
+ const LazyMain = lazy(() => import(/* webpackChunkName: "identifier-main" */ './Main'));
+ 
+@@ -37,6 +38,13 @@ const App = ({ bgImg }): ReactElement => {
+         fetchData();
+     }, []);
+ 
++    // oc-custom: the sign-in page follows the theme (title, favicon, colours)
++    useEffect(() => {
++        if (theme) {
++            applyBranding(theme);
++        }
++    }, [theme]);
++
+ 
+     if (loading) {
+         return <Spinner/>;
+@@ -55,10 +63,14 @@ const App = ({ bgImg }): ReactElement => {
+                     </Suspense>
+                 </MuiThemeProvider>
+                 {!bgImg &&
+-                    <img
+-                        src={`${process.env.PUBLIC_URL}/static/icon-lilac.svg`}
++                    // oc-custom: the hexagon as a mask, so it takes the accent colour
++                    <div
+                         className={'oc-login-bg-icon'}
+-                        alt=''
++                        style={{
++                            maskImage: `url(${process.env.PUBLIC_URL}/static/icon-lilac.svg)`,
++                            WebkitMaskImage: `url(${process.env.PUBLIC_URL}/static/icon-lilac.svg)`
++                        }}
++                        aria-hidden='true'
+                     />
+                 }
+             </div>
+diff --git a/services/idp/src/app.css b/services/idp/src/app.css
+index f6fd9319..37dfadfe 100644
+--- a/services/idp/src/app.css
++++ b/services/idp/src/app.css
+@@ -40,7 +40,8 @@ strong {
+ }
+ 
+ .oc-login-bg {
+-    background: #20434F;
++    /* oc-custom: the colours can come from the theme (src/branding.js) */
++    background: var(--oc-signin-background, #20434F);
+     display: flex;
+     width: 100%;
+ }
+@@ -51,6 +52,13 @@ strong {
+     bottom: -3vh;
+     height: 50vh;
+     z-index: 0;
++    /* oc-custom: a mask of icon-lilac.svg, filled with the accent colour */
++    aspect-ratio: 21.45 / 27.82;
++    background-color: var(--oc-signin-accent, #e2baff);
++    mask-size: contain;
++    mask-repeat: no-repeat;
++    -webkit-mask-size: contain;
++    -webkit-mask-repeat: no-repeat;
+ }
+ 
+ .oc-login-bg-image {
+@@ -112,7 +120,7 @@ strong {
+ }
+ 
+ .oc-input:focus {
+-    outline: 2px solid #e2baff;
++    outline: 2px solid var(--oc-signin-accent, #e2baff);
+     border: 1px solid #fff;
+ }
+ 
+@@ -146,9 +154,9 @@ strong {
+ .oc-button-primary {
+     /* Needs to be important to overwrite material-ui */
+     width: 100%;
+-    background: #e2baff !important;
++    background: var(--oc-signin-accent, #e2baff) !important;
+     border-radius: 100px !important;
+-    color: #20434f !important;
++    color: var(--oc-signin-on-accent, #20434f) !important;
+     box-shadow: none !important;
+     font-weight: 700 !important;
+ }
+diff --git a/services/idp/src/branding.js b/services/idp/src/branding.js
+new file mode 100644
+index 00000000..730ae0f0
+--- /dev/null
++++ b/services/idp/src/branding.js
+@@ -0,0 +1,47 @@
++// oc-custom: lets the sign-in page follow the instance's theme (theme.json,
++// including themes/_branding). Without branding everything stays as upstream:
++// the CSS variables default to the original colours in app.css.
++//
++//   common.name                      the tab title: "Sign in - <name>"
++//   clients.web.defaults.favicon     the tab icon
++//   common.signin.background         the page background
++//   common.signin.accent             the button, the input focus ring, the hexagon
++//   common.signin.onAccent           the button's text
++//   common.signin.footer             the footer text ("" hides it)
++
++const colorVariables = {
++  background: '--oc-signin-background',
++  accent: '--oc-signin-accent',
++  onAccent: '--oc-signin-on-accent'
++};
++
++// Only plain colour values: the theme is admin-controlled, but it ends up in CSS
++const colorPattern = /^(#[0-9a-fA-F]{3,8}|(rgb|rgba|hsl|hsla)\([0-9.,%\s]+\)|[a-zA-Z]+)$/;
++
++export function applyBranding(theme) {
++  const name = theme?.common?.name;
++  if (name) {
++    document.title = `Sign in - ${name}`;
++  }
++
++  const favicon = theme?.clients?.web?.defaults?.favicon;
++  const icon = document.querySelector('link[rel~="icon"]');
++  if (favicon && icon) {
++    icon.setAttribute('href', '/' + favicon.replace(/^\/+/, ''));
++    icon.removeAttribute('type');
++  }
++
++  const signin = theme?.common?.signin || {};
++  for (const [key, variable] of Object.entries(colorVariables)) {
++    const value = signin[key];
++    if (typeof value === 'string' && colorPattern.test(value.trim())) {
++      document.documentElement.style.setProperty(variable, value.trim());
++    }
++  }
++}
++
++// The footer text from the theme, or undefined to keep upstream's
++export function signinFooter(theme) {
++  const footer = theme?.common?.signin?.footer;
++  return typeof footer === 'string' ? footer : undefined;
++}
+diff --git a/services/idp/src/components/ResponsiveScreen.jsx b/services/idp/src/components/ResponsiveScreen.jsx
+index 86c3eba0..ce9c4a34 100644
+--- a/services/idp/src/components/ResponsiveScreen.jsx
++++ b/services/idp/src/components/ResponsiveScreen.jsx
+@@ -8,6 +8,7 @@ import DialogContent from '@material-ui/core/DialogContent';
+ 
+ import Loading from './Loading';
+ import { OpenCloudContext } from "../openCloudContext";
++import { signinFooter } from "../branding";
+ 
+ const styles = theme => ({
+   root: {
+@@ -46,9 +47,10 @@ const ResponsiveScreen = (props) => {
+     ...other
+   } = props;
+   const { theme } = useContext(OpenCloudContext);
++  const footer = signinFooter(theme);
+ 
+   const logo = (theme && !withoutLogo) ? (
+-        <img src={'/' + theme.common?.logo} className="oc-logo" alt="OpenCloud Logo"/>
++        <img src={'/' + theme.common?.logo} className="oc-logo" alt={`${theme.common?.name || 'OpenCloud'} Logo`}/>
+     ) : null;
+ 
+   const content = loading ? <Loading/> : (withoutPadding ? children : <DialogContent>{children}</DialogContent>);
+@@ -84,11 +86,16 @@ const ResponsiveScreen = (props) => {
+           </div>
+         </div>
+       </div>
+-      <footer className="oc-footer-message">
+-        <Trans i18nKey="konnect.footer.slogan">
+-          <strong>OpenCloud</strong> - excellent file sharing
+-        </Trans>
+-      </footer>
++      {/* oc-custom: the footer text can come from the theme */}
++      {footer === undefined ? (
++        <footer className="oc-footer-message">
++          <Trans i18nKey="konnect.footer.slogan">
++            <strong>OpenCloud</strong> - excellent file sharing
++          </Trans>
++        </footer>
++      ) : footer !== '' && (
++        <footer className="oc-footer-message">{footer}</footer>
++      )}
+     </Grid>
+   );
+ };
