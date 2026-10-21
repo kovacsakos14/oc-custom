@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+# Switches the nc2oc test env's OpenCloud to an oc-custom image, or back.
+#   test/use-custom ghcr.io/kovacsakos14/oc-custom:test-abc1234 [branding dir]
+#   test/use-custom --official
+# The branding dir defaults to branding/example. Needs the test env in
+# ~/dev/nc2oc-migration/test-env (or NC2OC_TEST_ENV) to be set up (its up.sh).
+set -euo pipefail
+
+repo="$(cd "$(dirname "$0")/.." && pwd)"
+env_dir="${NC2OC_TEST_ENV:-$HOME/dev/nc2oc-migration/test-env}"
+[ $# -ge 1 ] || { sed -n '2,6p' "$0" >&2; exit 2; }
+
+# The test env's own compose files, as its lib.sh puts them together
+NC_DB=$(sed -n 's/^NC_DB=//p' "$env_dir/.env")
+files=(-f "$env_dir/compose.yaml" -f "$env_dir/db-${NC_DB:-postgres}.yaml")
+
+if [ "$1" = "--official" ]; then
+    docker compose --env-file "$env_dir/.env" "${files[@]}" up -d opencloud
+    exit
+fi
+export OC_CUSTOM_IMAGE="$1"
+OC_CUSTOM_BRANDING="$(cd "${2:-$repo/branding/example}" && pwd)"
+export OC_CUSTOM_BRANDING
+docker pull -q "$OC_CUSTOM_IMAGE" >/dev/null 2>&1 || true # a local image needs no pull
+docker compose --env-file "$env_dir/.env" "${files[@]}" -f "$repo/test/compose.override.yml" up -d opencloud

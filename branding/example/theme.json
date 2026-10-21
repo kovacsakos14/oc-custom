@@ -1,0 +1,20 @@
+{
+  "common": {
+    "name": "Acme Files",
+    "slogan": "Acme Files – file sharing for Acme",
+    "logo": "themes/_branding/logo.svg",
+    "urls": {
+      "imprint": "https://example.com/imprint",
+      "privacy": "https://example.com/privacy"
+    }
+  },
+  "clients": {
+    "web": {
+      "defaults": {
+        "logo": "themes/_branding/logo.svg",
+        "logoMobile": "themes/_branding/logo-mobile.svg",
+        "favicon": "themes/_branding/favicon.svg"
+      }
+    }
+  }
+}
