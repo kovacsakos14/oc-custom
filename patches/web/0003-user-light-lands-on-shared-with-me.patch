@@ -1,0 +1,40 @@
+diff --git a/packages/web-app-files/src/views/spaces/DriveRedirect.vue b/packages/web-app-files/src/views/spaces/DriveRedirect.vue
+index 1a0602b..992df9b 100644
+--- a/packages/web-app-files/src/views/spaces/DriveRedirect.vue
++++ b/packages/web-app-files/src/views/spaces/DriveRedirect.vue
+@@ -10,7 +10,7 @@ import { useRoute, useRouter, useSpacesStore } from '@opencloud-eu/web-pkg'
+ import { AppLoadingSpinner } from '@opencloud-eu/web-pkg'
+ import { urlJoin } from '@opencloud-eu/web-client'
+ import { createFileRouteOptions } from '@opencloud-eu/web-pkg'
+-import { createLocationSpaces } from '@opencloud-eu/web-pkg'
++import { createLocationShares, createLocationSpaces } from '@opencloud-eu/web-pkg'
+ import omit from 'lodash-es/omit'
+ import { RouteLocationRaw } from 'vue-router'
+ 
+@@ -46,7 +46,8 @@ export default defineComponent({
+     })
+ 
+     if (!unref(personalSpace)) {
+-      router.replace(createLocationSpaces('files-spaces-projects'))
++      // oc-custom: accounts without a personal space (User Light) land on "Shared with me"
++      router.replace(createLocationShares('files-shares-with-me'))
+     } else {
+       const { params, query } = createFileRouteOptions(unref(personalSpace), {
+         path: unref(itemPath)
+diff --git a/packages/web-app-files/tests/unit/views/spaces/DriveRedirect.spec.ts b/packages/web-app-files/tests/unit/views/spaces/DriveRedirect.spec.ts
+index f16fe0e..76347c2 100644
+--- a/packages/web-app-files/tests/unit/views/spaces/DriveRedirect.spec.ts
++++ b/packages/web-app-files/tests/unit/views/spaces/DriveRedirect.spec.ts
+@@ -9,10 +9,10 @@ import {
+ } from '@opencloud-eu/web-test-helpers'
+ 
+ describe('DriveRedirect view', () => {
+-  it('redirects to "projects" route if no personal space exist', () => {
++  it('redirects to "shared with me" if no personal space exists', () => {
+     const { mocks } = getMountedWrapper()
+     expect(mocks.$router.replace).toHaveBeenCalledWith({
+-      name: 'files-spaces-projects'
++      name: 'files-shares-with-me'
+     })
+   })
+ })

@@ -1,0 +1,14 @@
+diff --git a/packages/web-pkg/src/composables/viewMode/constants.ts b/packages/web-pkg/src/composables/viewMode/constants.ts
+index 2a0d124..4e598bd 100644
+--- a/packages/web-pkg/src/composables/viewMode/constants.ts
++++ b/packages/web-pkg/src/composables/viewMode/constants.ts
+@@ -5,7 +5,8 @@ export const FolderViewModeConstants = {
+     condensedTable: 'resource-table-condensed',
+     tiles: 'resource-tiles'
+   },
+-  defaultModeName: 'resource-tiles',
++  // oc-custom: the table is the default view
++  defaultModeName: 'resource-table',
+   queryName: 'view-mode',
+   tilesSizeDefault: 2,
+   tilesSizeMax: 6,

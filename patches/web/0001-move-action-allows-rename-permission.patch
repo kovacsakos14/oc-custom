@@ -1,0 +1,81 @@
+diff --git a/packages/web-pkg/src/helpers/permissions.ts b/packages/web-pkg/src/helpers/permissions.ts
+index e97672d..8930e96 100644
+--- a/packages/web-pkg/src/helpers/permissions.ts
++++ b/packages/web-pkg/src/helpers/permissions.ts
+@@ -12,5 +12,7 @@ export function canBeMoved(resource: Resource, parentPath: string) {
+   const isExternal = resource.isReceivedShare() || resource.isMounted()
+   const isMountedInRoot = parentPath === '' && isExternal
+ 
+-  return resource.canBeDeleted() && !isMountedInRoot
++  // oc-custom: rename permission (NV) is enough, so roles that may move without deleting
++  // (e.g. "Can upload") get the action too
++  return (resource.canBeDeleted() || resource.canRename()) && !isMountedInRoot
+ }
+diff --git a/packages/web-pkg/tests/unit/helpers/permissions.spec.ts b/packages/web-pkg/tests/unit/helpers/permissions.spec.ts
+index d9e2709..c349309 100644
+--- a/packages/web-pkg/tests/unit/helpers/permissions.spec.ts
++++ b/packages/web-pkg/tests/unit/helpers/permissions.spec.ts
+@@ -4,12 +4,14 @@ import { canBeMoved } from '../../../src/helpers/permissions'
+ describe('permissions helper', () => {
+   describe('canBeMoved function', () => {
+     it.each([
+-      { isReceivedShare: false, isMounted: false, canBeDeleted: true, parentPath: '' },
+-      { isReceivedShare: false, isMounted: false, canBeDeleted: true, parentPath: 'folder' },
+-      { isReceivedShare: true, isMounted: false, canBeDeleted: true, parentPath: 'folder' },
+-      { isReceivedShare: false, isMounted: true, canBeDeleted: true, parentPath: 'folder' }
++      { isReceivedShare: false, isMounted: false, canBeDeleted: true, canRename: false, parentPath: '' },
++      { isReceivedShare: false, isMounted: false, canBeDeleted: true, canRename: false, parentPath: 'folder' },
++      { isReceivedShare: true, isMounted: false, canBeDeleted: true, canRename: false, parentPath: 'folder' },
++      { isReceivedShare: false, isMounted: true, canBeDeleted: true, canRename: false, parentPath: 'folder' },
++      { isReceivedShare: false, isMounted: false, canBeDeleted: false, canRename: true, parentPath: '' },
++      { isReceivedShare: true, isMounted: false, canBeDeleted: false, canRename: true, parentPath: 'folder' }
+     ])(
+-      'should return true if the given resource can be deleted and if it is not mounted in root',
++      'should return true if the given resource can be deleted or renamed and if it is not mounted in root',
+       (input) => {
+         // resources are supposed to be external if it is a received share or is mounted
+         // resources are supposed to be mountedInRoot if its parentPath is an empty string and resource is external
+@@ -18,7 +20,8 @@ describe('permissions helper', () => {
+             {
+               isReceivedShare: () => input.isReceivedShare,
+               isMounted: () => input.isMounted,
+-              canBeDeleted: () => input.canBeDeleted
++              canBeDeleted: () => input.canBeDeleted,
++              canRename: () => input.canRename
+             } as unknown as Resource,
+             input.parentPath
+           )
+@@ -26,22 +29,24 @@ describe('permissions helper', () => {
+       }
+     )
+     it.each([
+-      { isReceivedShare: false, isMounted: false, canBeDeleted: false, parentPath: '' },
+-      { isReceivedShare: false, isMounted: false, canBeDeleted: false, parentPath: 'folder' },
+-      { isReceivedShare: true, isMounted: false, canBeDeleted: false, parentPath: 'folder' },
+-      { isReceivedShare: false, isMounted: true, canBeDeleted: false, parentPath: 'folder' },
+-      { isReceivedShare: false, isMounted: true, canBeDeleted: true, parentPath: '' },
+-      { isReceivedShare: true, isMounted: false, canBeDeleted: true, parentPath: '' },
+-      { isReceivedShare: true, isMounted: true, canBeDeleted: true, parentPath: '' }
++      { isReceivedShare: false, isMounted: false, canBeDeleted: false, canRename: false, parentPath: '' },
++      { isReceivedShare: false, isMounted: false, canBeDeleted: false, canRename: false, parentPath: 'folder' },
++      { isReceivedShare: true, isMounted: false, canBeDeleted: false, canRename: false, parentPath: 'folder' },
++      { isReceivedShare: false, isMounted: true, canBeDeleted: false, canRename: false, parentPath: 'folder' },
++      { isReceivedShare: false, isMounted: true, canBeDeleted: true, canRename: false, parentPath: '' },
++      { isReceivedShare: true, isMounted: false, canBeDeleted: true, canRename: false, parentPath: '' },
++      { isReceivedShare: true, isMounted: true, canBeDeleted: true, canRename: false, parentPath: '' },
++      { isReceivedShare: true, isMounted: false, canBeDeleted: false, canRename: true, parentPath: '' }
+     ])(
+-      'should return false if the given resource cannot be deleted or if it is mounted in root',
++      'should return false if the given resource cannot be deleted nor renamed or if it is mounted in root',
+       (input) => {
+         expect(
+           canBeMoved(
+             {
+               isReceivedShare: () => input.isReceivedShare,
+               isMounted: () => input.isMounted,
+-              canBeDeleted: () => input.canBeDeleted
++              canBeDeleted: () => input.canBeDeleted,
++              canRename: () => input.canRename
+             } as unknown as Resource,
+             input.parentPath
+           )
