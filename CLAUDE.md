@@ -2,12 +2,12 @@
 
 Context for working on this repo. User-facing docs are in README.md; this file holds what a new session needs and can't easily derive from the code. **This repo is public:** notes about the private test environment, the tools around it and the plan files are in `CLAUDE.local.md` (gitignored); read it too when it exists, and keep such details out of committed files.
 
-## Resuming in a new session (state on 2026-10-22: 7.2.4-3 released; patch 6 merged; the Authelia companion `deploy/` + `test/deploy/` built on branch `feat/deploy`, release 7.2.4-4 pending)
+## Resuming in a new session (state on 2026-10-22: 7.2.4-4 released with patch 6, `deploy/` and `test/deploy/` (the optional Authelia companion); next: the user's manual test in a private environment)
 
 1. **Read** this file and `CLAUDE.local.md` (the plan file and the test environment are named there).
 2. **Check the state:**
-   - `git log --oneline -5`, `git status`: the working tree was clean, everything pushed to `origin` (GitHub, **public**: `kovacsakos14/oc-custom`). The latest release tag is `v7.2.4-3` (signed; `v7.2.4-2` and `v7.2.4-1` before it).
-   - `gh run list -L 3`: the release build of `v7.2.4-3` passed (2026-10-21) and published `ghcr.io/kovacsakos14/oc-custom:7.2.4-3` (public, pulls without login). Earlier: `7.2.4-2` (`sha256:10f039a2…`), `7.2.4-1` (`sha256:e9b56fe7…`).
+   - `git log --oneline -5`, `git status`: the working tree was clean, everything pushed to `origin` (GitHub, **public**: `kovacsakos14/oc-custom`). The latest release tag is `v7.2.4-4` (signed; `v7.2.4-3`, `-2`, `-1` before it).
+   - `gh run list -L 3`: the release build of `v7.2.4-4` passed (2026-10-22) and published `ghcr.io/kovacsakos14/oc-custom:7.2.4-4` (`sha256:47aa831e…`; public, pulls without login); `test/deploy/run.sh` passed on it (33/33). Earlier: `7.2.4-3` (2026-10-21), `7.2.4-2` (`sha256:10f039a2…`), `7.2.4-1` (`sha256:e9b56fe7…`).
    - The test environment (`test/local.env`, see `CLAUDE.local.md`): `test/use-custom <image>` swaps its OpenCloud's image, `--official` runs upstream's.
    - `scripts/fetch` reports whether `upstream/` (gitignored) is still at the pinned tags. Its clones have the patches applied, plus build leftovers (IDP assets, `node_modules`).
 3. **What's next is the user's choice; ask which.** Talk it through first. Commit at each logical step with Conventional Commits; push when a step is done. See "Next steps" below.
@@ -67,7 +67,7 @@ Context for working on this repo. User-facing docs are in README.md; this file h
   - `scripts/compat`: all patches apply to v7.2.4 and stable-7.2 (7.2.5); on v8.1.0 only `web/0003` (DriveRedirect) conflicts.
 
 ## Next steps
-- **Authelia companion (agreed 2026-10-22; prototype findings in `CLAUDE.local.md`):** done: patch 6 (`web/0004`, merged in PR #3), `AUTHELIA_IMAGE` in `versions.env`, `deploy/` (compose with and without Authelia, Authelia's config, the SWAG site, `setup.sh`, `users.sh`, its README) and `test/deploy/run.sh` (all checks pass on `:test-22cfdf6`, branch `feat/deploy`). Still to do: release `7.2.4-4` (BUILD=4, tag) after the user merges, then run `test/deploy/run.sh` on the released image; the user's manual test in their private environment (SWAG, real domain and certificate, real SMTP, the desktop and mobile apps); not tested yet: the mobile apps, a real SMTP server with STARTTLS/SSL, SWAG on the host's 443 with `host-gateway` (the test puts SWAG on the test network instead).
+- **Authelia companion (agreed 2026-10-22; prototype findings in `CLAUDE.local.md`):** done: patch 6 (`web/0004`, merged in PR #3), `AUTHELIA_IMAGE` in `versions.env`, `deploy/` (compose with and without Authelia, Authelia's config, the SWAG site, `setup.sh`, `users.sh`, its README) and `test/deploy/run.sh` (all checks pass on `:test-22cfdf6`, branch `feat/deploy`). Released as `7.2.4-4` (run.sh 33/33 on it). Still to do: the user's manual test in their private environment (SWAG, real domain and certificate, real SMTP, the desktop and mobile apps); not tested yet: the mobile apps, a real SMTP server with STARTTLS/SSL, SWAG on the host's 443 with `host-gateway` (the test puts SWAG on the test network instead).
 - **The branding editor** is built outside this repo (see `CLAUDE.local.md`). This repo only owns the folder's format: if a change here adds or renames `theme.json` keys, update the README "Branding" and say so in `CLAUDE.local.md`.
 - **7.2.5:** release PR #3614 is pending upstream. When it's out, decide whether it's worth a rebuild (it's a thumbnails fix plus reindex backports).
 - **The November production release** (due 2026-11-17, probably 8.2):
