@@ -4,6 +4,8 @@
 
 Based on OpenCloud **7.2.4** (reva v2.46.8, web v7.1.5); see `versions.env`. Image: `ghcr.io/kovacsakos14/oc-custom:7.2.4-<build>`.
 
+The aim is a plain file server: shared folders first, nothing on screen that isn't used.
+
 ## Contents
 - [What's changed](#whats-changed)
 - [Deploying](#deploying)
@@ -23,7 +25,17 @@ Based on OpenCloud **7.2.4** (reva v2.46.8, web v7.1.5); see `versions.env`. Ima
 | 3 | **The table is the default file view** instead of tiles. Users who already picked a view keep it (it's stored in their browser). | `patches/web/0002-…` |
 | 4 | **Accounts without a personal space (User Light) land on "Shared with me"** instead of the empty Spaces list. Others are unchanged. | `patches/web/0003-…` |
 | 5 | **The sign-in page follows the branding:** its tab title, tab icon, colours, footer and, from 7.2.4-2, a background image (see [Branding](#branding)). Without branding it looks exactly as upstream's. | `patches/server/0001-…` |
-| 6 | **"Change password" can open an external password page** (from 7.2.4-4; for the optional [Authelia](deploy/README.md) setup). When `WEB_OPTION_ACCOUNT_EDIT_LINK_HREF` is set, Settings → Preferences → "Change password" opens that URL in a new tab instead of OpenCloud's dialog, and the row shows even if OpenCloud's own password change is turned off. The "Edit" button upstream shows for that setting on Settings → Profile is removed. Without the setting nothing changes. | `patches/web/0004-…` |
+| 6 | **"Change password" can open an external password page** (from 7.2.4-4; for the optional [Authelia](deploy/README.md) setup). When `WEB_OPTION_ACCOUNT_EDIT_LINK_HREF` is set, Settings → Preferences → "Change password" opens that URL in a new tab instead of OpenCloud's dialog, and the row shows even if OpenCloud's own password change is turned off. The "Edit" button upstream shows for that setting on Settings → Profile is removed, and (from 7.2.4-5) so is the "Show devices" row `WEB_OPTION_LOGOUT_URL` would add there (see 12). Without the settings nothing changes. | `patches/web/0004-…` |
+| 7 | **The share dialog finds people by username** too (from 7.2.4-5), not only by display name and e-mail. The server already matched usernames; the web dropped those results. | `patches/web/0005-…` |
+| 8 | **Shares comes first** (from 7.2.4-5): it's the top entry of the left menu and every account lands on "Shared with me" after signing in. Personal is the next entry. **The Spaces entry is hidden** for everyone; admins still manage spaces under Admin settings → Spaces. | `patches/web/0006-…` |
+| 9 | **Shares can't be hidden** (from 7.2.4-5): no Hide action, no eye button in "Shared with me", no Shares / Hidden Shares switch. Shares hidden before show in the list again. | `patches/web/0007-…` |
+| 10 | **"Copy permanent link" only for accounts that can share** (from 7.2.4-5), so not for User Light. The link only ever worked for people who already had access. | `patches/web/0008-…` |
+| 11 | **The Text Editor isn't in the app menu or the "New" menu** (from 7.2.4-5). Text and Markdown files still open and save in it. | `patches/web/0009-…` |
+| 12 | **"Log out" also signs out of an identity provider without a sign-out endpoint** (from 7.2.4-5; Authelia has none): with `WEB_OPTION_LOGOUT_URL` set, "Log out" goes there after OpenCloud's own sign-out, so the next sign-in asks for the password again and another user can sign in. [`deploy/`](deploy/README.md) sets it to Authelia's `/logout`. With OpenCloud's own sign-in nothing changes. | `patches/web/0010-…` |
+
+**Recommended setting:** `FRONTEND_DISABLE_RADICALE: "true"` removes Calendar from the app menu (OpenCloud shows it by default, but without a CalDAV server set up it leads nowhere). `deploy/` sets it.
+
+Resharing needs no change: no share role lets a recipient share an item again, and User Light accounts can't create shares or public links at all (the server refuses both).
 
 Everything else is upstream's: the image is the official one with only `/usr/bin/opencloud` replaced, built from the same sources and with the same toolchain and target. `opencloud version` and `status.php` report `7.2.4+custom.<build>`.
 
@@ -34,7 +46,7 @@ Everything else is upstream's: the image is the official one with only `/usr/bin
 ```yaml
 services:
   opencloud:
-    image: ghcr.io/kovacsakos14/oc-custom:7.2.4-4   # was: opencloudeu/opencloud:7.2.4
+    image: ghcr.io/kovacsakos14/oc-custom:7.2.4-5   # was: opencloudeu/opencloud:7.2.4
     volumes:
       - ./config:/etc/opencloud
       - ./data:/var/lib/opencloud
@@ -140,7 +152,7 @@ OpenCloud doesn't refuse to run an older version, but upgrades can be one-way: s
 ## Testing
 Builds are tested in a separate OpenCloud test environment (Docker Compose, not part of this repo) with test users of each role and folder shares of each kind. The helpers in `test/` work with any such environment: copy `test/local.env.example` to `test/local.env` (gitignored) and set its compose command, URL and admin app token.
 - `test/use-custom <image> [branding dir]` runs the test environment's OpenCloud on another image, with a branding folder (default `branding/example`); `test/use-custom --official` runs upstream's image of the same version without branding.
-- `test/browser <out dir> user:password …` signs in as each user in a fresh browser profile. It saves screenshots and records where they landed and whether files show as a table. With `ACTIONS="client1:Client folder/readme.txt"` it also opens that file's context menu and lists its actions (rename, move, delete…).
+- `test/browser <out dir> user:password …` signs in as each user in a fresh browser profile. It saves screenshots and records where they landed, whether files show as a table, the left menu, the app menu and what "Shared with me" offers (hide buttons, the hidden-shares switch). With `ACTIONS="client1:Client folder/readme.txt"` it also opens that file's context menu and lists its actions (rename, move, delete…); with `NEW=1` it lists the "New" menu in Personal; with `SEARCH="admin:client1"` it types into the share dialog and lists who it offers.
 - `test/check-permissions <user> <share>` lists what OpenCloud reports for each item in a share (`oc:permissions`) as the recipient sees it. A "Can upload" share shows `NV`, with no `D` or `W`.
 - `scripts/smoke-test <image>` starts an image with a fresh config and checks the version, the branding and the web UI (CI runs it on every build).
 - `test/deploy/run.sh [--image <image>] [--keep]` tests `deploy/` from scratch, about 10 minutes, Docker only: the real SWAG image (with a self-signed certificate; Let's Encrypt is skipped) and Mailpit on their own network, then the stack with Authelia and without it. It checks `setup.sh` and every `users.sh` command, and in a browser: a user signing in with a password only, "Change password" opening Authelia's page and changing the password there, a disabled user refused, the desktop app's sign-in (PKCE, its loopback redirect, refresh), the admin registering 2FA at the first sign-in, removing and re-registering it on Authelia's settings page and after `users.sh reset-2fa`; without Authelia, OpenCloud's own sign-in and password dialog. `--keep` leaves it running; `--clean` removes it.
@@ -149,7 +161,9 @@ Builds are tested in a separate OpenCloud test environment (Docker Compose, not 
 - **A "Can upload" recipient:** items report `NV` and no `D`/`W`. Rename, the Move action, drag and drop and cut/paste work; delete is neither offered nor allowed.
 - **A public upload link:** no rename/move.
 - **Can view and Can edit shares:** unchanged.
-- **A fresh browser:** files show as a table. A User Light account lands on "Shared with me"; a User lands on their personal files.
+- **A fresh browser:** files show as a table. Every account lands on "Shared with me"; the left menu is Shares, Personal (not for User Light), Favorites, Deleted files, without Spaces; the app menu has no Text Editor (nor Calendar with the recommended setting).
+- **"Shared with me":** no eye buttons and no Shares / Hidden Shares switch. A User Light recipient's context menu has no "Copy permanent link".
+- **The share dialog:** typing a username finds the user. "New" has no text or Markdown file entries, yet such files still open and save in the Text Editor.
 - **The branding:** it shows on the sign-in page and in the web UI. Without a branding folder, the sign-in page looks like upstream's.
 - **The test environment's own end-to-end tests still pass** (migration, user and share management).
 
@@ -168,7 +182,7 @@ Builds are tested in a separate OpenCloud test environment (Docker Compose, not 
 - `CLAUDE.md`: working notes for continuing development (decisions, findings, next steps).
 
 ## Status
-**Released:** `7.2.4-4` (2026-10-22): patch 6 (["Change password" can open an external password page](#whats-changed)), for the optional Authelia setup in [`deploy/`](deploy/README.md), tested with Authelia 4.39.28 (`AUTHELIA_IMAGE` in `versions.env`); otherwise the same as `7.2.4-3`. `7.2.4-3` (2026-10-21): the sign-in page takes background images and the favicon only from the server itself (no `https://` URLs, `%` escapes or `..`); the web is built with a pinned node image and pnpm, releases without caches. `7.2.4-2` (2026-10-21): adds the sign-in background image (`common.signin.backgroundImage`) to patch 5; otherwise the same as `7.2.4-1`.
+**Released:** `7.2.4-5` (2026-10-22): patches 7–12 (username search, Shares first and no Spaces, no hiding of shares, no permanent link for User Light, the Text Editor out of the menus, "Log out" through Authelia's `/logout`) and Calendar off in `deploy/`; otherwise the same as `7.2.4-4`. `7.2.4-4` (2026-10-22): patch 6 (["Change password" can open an external password page](#whats-changed)), for the optional Authelia setup in [`deploy/`](deploy/README.md), tested with Authelia 4.39.28 (`AUTHELIA_IMAGE` in `versions.env`); otherwise the same as `7.2.4-3`. `7.2.4-3` (2026-10-21): the sign-in page takes background images and the favicon only from the server itself (no `https://` URLs, `%` escapes or `..`); the web is built with a pinned node image and pnpm, releases without caches. `7.2.4-2` (2026-10-21): adds the sign-in background image (`common.signin.backgroundImage`) to patch 5; otherwise the same as `7.2.4-1`.
 
 `7.2.4-1` (2026-10-21), OpenCloud 7.2.4 with patches 1–5. Tested:
 - what a "Can upload" recipient is told and can do (rename and move yes, delete no);
@@ -178,23 +192,24 @@ Builds are tested in a separate OpenCloud test environment (Docker Compose, not 
 - the branding on the sign-in page and in the web UI;
 - the test environment's end-to-end tests (migration, user and share management).
 
-**Upstream compatibility** (`scripts/compat`, 2026-10-21):
+**Upstream compatibility** (`scripts/compat`, 2026-10-22):
 
 | OpenCloud | Patches |
 |---|---|
 | 7.2.4, stable-7.2 (the coming 7.2.5) | All apply |
-| 8.1.0 (rolling) | All apply except `web/0003` (User Light → "Shared with me"); its code changed in 8.x and needs a rebase |
+| 8.1.0 (rolling) | Server, reva, `web/0001`, `0002` and `0008` apply; `web/0003`–`0007`, `0009` and `0010` conflict (web 8.x changed those files) and need a rebase |
 
 **Optional sign-in with 2FA through Authelia (from 7.2.4-4).** OpenCloud's built-in sign-in has no two-factor authentication. oc-custom offers [Authelia](https://www.authelia.com/) (Apache-2.0) as an optional, tested companion ([`deploy/`](deploy/README.md)):
 - **Without Authelia nothing changes:** OpenCloud's built-in sign-in and its own "Change password" dialog.
 - **With Authelia:** it runs in its own container in the same compose stack (not inside this image: it has its own security releases, data and process), under `https://<OpenCloud's name>/authelia`, so one DNS name and one certificate. OpenCloud runs with its built-in IdP off, without autoprovisioning and with the `default` role driver. Users still live in OpenCloud's own directory; Authelia's file backend holds their passwords and groups, its database their 2FA devices. 2FA (TOTP) is required for admins only; users can add or remove their own authenticator app on Authelia's settings page.
 - **A tested pair:** `versions.env` pins the Authelia version (`AUTHELIA_IMAGE`) each build is tested with, and `test/deploy/run.sh` tests the pair behind the real SWAG image.
 - **Patch 6 (web):** Settings → Preferences → "Change password" opens the URL in `WEB_OPTION_ACCOUNT_EDIT_LINK_HREF` (Authelia's password page) in a new tab, and the "Edit" button that setting would add to Settings → Profile is removed.
+- **Patch 12 (web, from 7.2.4-5):** Authelia 4.39 has no OIDC sign-out endpoint, so OpenCloud's "Log out" used to leave Authelia's session behind and the next sign-in skipped the password. With `WEB_OPTION_LOGOUT_URL` set to Authelia's `/logout?rd=<the server>`, "Log out" ends both.
 - **SWAG:** the site `deploy/` writes proxies `/authelia` to Authelia and the rest to OpenCloud. SWAG's own Authelia files are for protecting other apps and aren't used. SWAG's `proxy.conf` turns `http://` redirects into `https://`, which broke the desktop app's sign-in (it ends with a redirect to `http://127.0.0.1:<port>`); the site keeps those unchanged.
 
 **Next:**
 - **7.2.5:** decide whether it's worth a rebuild once it's released.
-- **The next production release** (due mid-November 2026, probably 8.x): rebase `web/0003`, test it, and snapshot servers before upgrading, since 7.2 → 8 is one-way.
+- **The next production release** (due mid-November 2026, probably 8.x): rebase the web patches that conflict (see the table), test, and snapshot servers before upgrading, since 7.2 → 8 is one-way.
 
 ## Licence
 - **Upstream:** OpenCloud's server and reva are Apache-2.0; OpenCloud Web is AGPL-3.0.

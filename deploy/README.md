@@ -8,6 +8,7 @@ This folder is a complete OpenCloud server: oc-custom, optionally [Authelia](htt
 | 2FA | Required for admins (an authenticator app); others sign in with their password | None |
 | Passwords live in | Authelia's user file (`authelia/users/`) | OpenCloud |
 | "Change password" in OpenCloud | Opens Authelia's page (password, and the user's own 2FA) | OpenCloud's dialog |
+| "Log out" in OpenCloud | Also ends the Authelia session, so the next sign-in asks for the password | OpenCloud's own |
 | Containers | `opencloud`, `authelia` | `opencloud` |
 
 Users are always created in OpenCloud. With Authelia they also need an entry in Authelia's user file; `./users.sh` does both.
@@ -51,6 +52,8 @@ The desktop and mobile apps connect to `https://<your domain>` as usual. They op
 - With Authelia, OpenCloud's own password for each user is random and unused; passwords are checked by Authelia only.
 - `users.sh` uses an app token for `admin`, created on first use and kept in `.admin-token` (private, valid one year; delete the file to get a new one, and remove the old token under the admin's Settings → App Tokens).
 - Users created in OpenCloud's web UI (Admin settings → Users) exist only in OpenCloud. With Authelia they can't sign in until they have an entry in Authelia's file: create them with `users.sh` instead.
+
+**What users see:** after signing in, "Shared with me" (Shares is the first entry of the left menu; staff also have Personal). There's no Spaces entry, no Calendar and no Text Editor in the app menu; text and Markdown files still open in the editor.
 
 **What users do themselves (with Authelia):** in OpenCloud, their initials (top right) → Preferences → "Change password" opens Authelia's settings in a new tab. There they change their password, and in the menu (☰) → Two-Factor Authentication they add or remove their authenticator app. Authelia first e-mails them a one-time code to confirm it's them.
 
