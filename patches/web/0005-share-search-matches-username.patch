@@ -1,0 +1,47 @@
+diff --git a/packages/web-app-files/src/components/SideBar/Shares/Collaborators/InviteCollaborator/InviteCollaboratorForm.vue b/packages/web-app-files/src/components/SideBar/Shares/Collaborators/InviteCollaborator/InviteCollaboratorForm.vue
+index 4298e44..0965e23 100644
+--- a/packages/web-app-files/src/components/SideBar/Shares/Collaborators/InviteCollaborator/InviteCollaboratorForm.vue
++++ b/packages/web-app-files/src/components/SideBar/Shares/Collaborators/InviteCollaborator/InviteCollaboratorForm.vue
+@@ -579,11 +579,15 @@ export default defineComponent({
+       // Allow advanced queries
+       query = query.split(':')[1] || query
+ 
++      // oc-custom: the server also matches the username, so keep those results
+       return recipients.filter(
+         (recipient) =>
+           recipient.shareType === ShareTypes.remote.value ||
+           recipient.displayName.toLocaleLowerCase().indexOf(query.toLocaleLowerCase()) > -1 ||
+-          recipient.mail?.toLocaleLowerCase().indexOf(query.toLocaleLowerCase()) > -1
++          recipient.mail?.toLocaleLowerCase().indexOf(query.toLocaleLowerCase()) > -1 ||
++          recipient.onPremisesSamAccountName
++            ?.toLocaleLowerCase()
++            .indexOf(query.toLocaleLowerCase()) > -1
+       )
+     },
+ 
+diff --git a/packages/web-app-files/tests/unit/components/SideBar/Shares/Collaborators/InviteCollaborator/InviteCollaboratorForm.spec.ts b/packages/web-app-files/tests/unit/components/SideBar/Shares/Collaborators/InviteCollaborator/InviteCollaboratorForm.spec.ts
+index caeb2d8..fd729ac 100644
+--- a/packages/web-app-files/tests/unit/components/SideBar/Shares/Collaborators/InviteCollaborator/InviteCollaboratorForm.spec.ts
++++ b/packages/web-app-files/tests/unit/components/SideBar/Shares/Collaborators/InviteCollaborator/InviteCollaboratorForm.spec.ts
+@@ -114,6 +114,21 @@ describe('InviteCollaboratorForm', () => {
+       expect(wrapper.vm.autocompleteResults.length).toBe(1)
+     })
+   })
++  describe('filterRecipients', () => {
++    const recipients = [
++      { id: '2', displayName: 'Anna Kovács', mail: 'anna@example.com', shareType: 0 },
++      { id: '3', displayName: 'Client One', onPremisesSamAccountName: 'client1', shareType: 0 }
++    ] as CollaboratorAutoCompleteItem[]
++    it.each([
++      ['kovács', ['2']],
++      ['anna@', ['2']],
++      ['CLIENT1', ['3']],
++      ['nobody', []]
++    ])('matches "%s" on display name, e-mail or username', (query, ids) => {
++      const { wrapper } = getWrapper()
++      expect(wrapper.vm.filterRecipients(recipients, query).map(({ id }) => id)).toEqual(ids)
++    })
++  })
+   describe('share action', () => {
+     it('clicking the invite-sharees button calls the "share"-action', async () => {
+       const { wrapper } = getWrapper()
