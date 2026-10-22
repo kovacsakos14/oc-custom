@@ -2,12 +2,12 @@
 
 Context for working on this repo. User-facing docs are in README.md; this file holds what a new session needs and can't easily derive from the code. **This repo is public:** notes about the private test environment, the tools around it and the plan files are in `CLAUDE.local.md` (gitignored); read it too when it exists, and keep such details out of committed files.
 
-## Resuming in a new session (state at the end of 2026-10-21: 7.2.4-2 released, nothing in progress)
+## Resuming in a new session (state on 2026-10-22: 7.2.4-3 released; optional Authelia (2FA) decided and prototyped, not built here yet)
 
 1. **Read** this file and `CLAUDE.local.md` (the plan file and the test environment are named there).
 2. **Check the state:**
-   - `git log --oneline -5`, `git status`: the working tree was clean, everything pushed to `origin` (GitHub, **public**: `kovacsakos14/oc-custom`). The latest release tag is `v7.2.4-2` (signed; `v7.2.4-1` before it).
-   - `gh run list -L 3`: the release build of `v7.2.4-2` passed and published `ghcr.io/kovacsakos14/oc-custom:7.2.4-2` (digest `sha256:10f039a2…`, public, pulls without login). `7.2.4-1` (`sha256:e9b56fe7…`) is the previous one.
+   - `git log --oneline -5`, `git status`: the working tree was clean, everything pushed to `origin` (GitHub, **public**: `kovacsakos14/oc-custom`). The latest release tag is `v7.2.4-3` (signed; `v7.2.4-2` and `v7.2.4-1` before it).
+   - `gh run list -L 3`: the release build of `v7.2.4-3` passed (2026-10-21) and published `ghcr.io/kovacsakos14/oc-custom:7.2.4-3` (public, pulls without login). Earlier: `7.2.4-2` (`sha256:10f039a2…`), `7.2.4-1` (`sha256:e9b56fe7…`).
    - The test environment (`test/local.env`, see `CLAUDE.local.md`): `test/use-custom <image>` swaps its OpenCloud's image, `--official` runs upstream's.
    - `scripts/fetch` reports whether `upstream/` (gitignored) is still at the pinned tags. Its clones have the patches applied, plus build leftovers (IDP assets, `node_modules`).
 3. **What's next is the user's choice; ask which.** Talk it through first. Commit at each logical step with Conventional Commits; push when a step is done. See "Next steps" below.
@@ -21,6 +21,7 @@ Context for working on this repo. User-facing docs are in README.md; this file h
 - **Public repo and public image:** covers the AGPL source offer for the web, and servers pull without tokens.
 - **Licences:** server and reva Apache-2.0, web AGPL-3.0, the repo AGPL-3.0. "OpenCloud" is OpenCloud GmbH's trademark, so customers should see the user's branding, not "OpenCloud" passed off as theirs.
 - **Commits are GPG-signed:** key `F6FEA88C37C6A221` (ed25519, no passphrase, on this VM and on GitHub, expires 2028-10-20); the repo config sets `commit.gpgsign` and `tag.gpgsign`. The author is `kovacsakos <kovacsakos12@gmail.com>`.
+- **Optional sign-in with 2FA: Authelia, a tested companion, not part of the image** (decided 2026-10-22; README "Status"). OpenCloud's built-in IdP has no 2FA. Authelia runs in its own container in the same compose stack under `/authelia` on OpenCloud's own name; OpenCloud with `OC_EXCLUDE_RUN_SERVICES=idp`, `PROXY_AUTOPROVISION_ACCOUNTS=false`, `PROXY_ROLE_ASSIGNMENT_DRIVER=default` (the `oidc` driver breaks the desktop client: opencloud-compose#111, desktop#217); users stay in OpenCloud's IDM, Authelia's file backend holds passwords, groups and TOTP devices; 2FA only for an admins group. Not in the image because of Authelia's own release cycle, data and process (no supervisor in this image). Instead: `versions.env` pins the tested Authelia version, the repo holds the reference setup and the tests cover the pair. **Without Authelia nothing changes:** the built-in IdP and upstream's password dialog. Patch 6 (web, planned) makes "Change password" open a URL from the web config, and is a no-op without it.
 - **Builds run in GitHub Actions only:** this VM (2 vCPU, 3 GB RAM, ~1 GB free) can't link the server. Small parts can be built locally: the IDP frontend took 2 min, the web's `pnpm install` 75 s.
 
 ## Findings (things that cost time)
@@ -58,6 +59,7 @@ Context for working on this repo. User-facing docs are in README.md; this file h
   - `scripts/compat`: all patches apply to v7.2.4 and stable-7.2 (7.2.5); on v8.1.0 only `web/0003` (DriveRedirect) conflicts.
 
 ## Next steps
+- **Authelia companion (agreed 2026-10-22; details and the prototype's findings in `CLAUDE.local.md`):** patch 6 (`accountPreferences.vue`: "Change password" → URL from the web config, upstream dialog without it; keep it in its own file set, like the other patches); `AUTHELIA_VERSION` (+ digest) in `versions.env`; the reference setup (compose, Authelia config template with the four clients `web`, `OpenCloudDesktop`, `OpenCloudAndroid`, `OpenCloudIOS`, the admins `two_factor` rule, `/authelia` path, CSP, nginx/SWAG snippet); tests for the pair (web sign-in, admin TOTP, desktop PKCE flow, the password link) and a check with the real SWAG image; README "Deploying" with both variants. Talk the order through with the user first.
 - **The branding editor** is built outside this repo (see `CLAUDE.local.md`). This repo only owns the folder's format: if a change here adds or renames `theme.json` keys, update the README "Branding" and say so in `CLAUDE.local.md`.
 - **7.2.5:** release PR #3614 is pending upstream. When it's out, decide whether it's worth a rebuild (it's a thumbnails fix plus reindex backports).
 - **The November production release** (due 2026-11-17, probably 8.2):
