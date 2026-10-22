@@ -1,0 +1,46 @@
+## OpenCloud ({{OC_STACK}}): https://{{OC_DOMAIN}}
+## Written by setup.sh as swag/{{OC_STACK}}.subdomain.conf. Copy it to SWAG's
+## config/nginx/proxy-confs/ and restart SWAG; its certificate must cover
+## {{OC_DOMAIN}}. SWAG's own authelia-*.conf files are for protecting other
+## apps and aren't used here.
+
+server {
+    listen 443 ssl;
+    listen [::]:443 ssl;
+
+    server_name {{OC_DOMAIN}};
+
+    include /config/nginx/ssl.conf;
+
+    # Uploads of any size, streamed straight through
+    client_max_body_size 0;
+
+    # Authelia (sign-in with 2FA); without it this answers 502 and isn't used
+    location /authelia {
+        # proxy.conf turns every http:// redirect into https://, which breaks
+        # the desktop app's sign-in: it ends with a redirect to the app's own
+        # http://127.0.0.1:<port>. The first matching rule wins, so these
+        # (unchanged) come before it.
+        proxy_redirect http://127.0.0.1 http://127.0.0.1;
+        proxy_redirect http://localhost http://localhost;
+        include /config/nginx/proxy.conf;
+        include /config/nginx/resolver.conf;
+        set $upstream_app {{OC_STACK}}-authelia;
+        set $upstream_port 9091;
+        set $upstream_proto http;
+        proxy_pass $upstream_proto://$upstream_app:$upstream_port;
+    }
+
+    location / {
+        include /config/nginx/proxy.conf;
+        include /config/nginx/resolver.conf;
+        # proxy.conf sets the timeouts and the websocket headers; uploads and
+        # server-sent events must not be buffered
+        proxy_buffering off;
+        proxy_request_buffering off;
+        set $upstream_app {{OC_STACK}}-opencloud;
+        set $upstream_port 9200;
+        set $upstream_proto http;
+        proxy_pass $upstream_proto://$upstream_app:$upstream_port;
+    }
+}

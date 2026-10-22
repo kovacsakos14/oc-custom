@@ -1,0 +1,8 @@
+# Test only (run.sh), with Authelia: see compose.test.yaml
+services:
+  authelia:
+    environment:
+      # The checks ask for several e-mailed codes within minutes; keep
+      # Authelia's rate limit for that (one per client) out of the way
+      AUTHELIA_SERVER_ENDPOINTS_RATE_LIMITS_SESSION_ELEVATION_START_ENABLE: "false"
+      AUTHELIA_SERVER_ENDPOINTS_RATE_LIMITS_SESSION_ELEVATION_FINISH_ENABLE: "false"

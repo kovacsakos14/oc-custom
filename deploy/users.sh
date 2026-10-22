@@ -1,0 +1,321 @@
+#!/usr/bin/env bash
+# Manages users on this server: OpenCloud's accounts and, with Authelia,
+# their passwords, groups and 2FA in Authelia. Run ./users.sh help.
+set -euo pipefail
+cd "$(dirname "$0")"
+. ./lib.sh
+
+ROLE_ADMIN=71881883-1768-46bd-a24d-a356a2afdf7f
+ROLE_USER=d7beeea8-8ff4-406b-8fb6-ab2dd81e6b11
+ROLE_LIGHT=38071a68-456a-4553-846a-fa67bf5596cc # User Light: no personal space
+TOKEN_FILE=.admin-token
+
+usage() {
+    cat <<'EOF'
+Usage: ./users.sh COMMAND [USER] [OPTIONS]
+
+  list                          OpenCloud's users, their role and sign-in state
+  add USER [--name NAME] [--email ADDRESS] [--role user|admin|light] [--random]
+                                Creates the user; asks for the password
+                                (--random: makes one up and shows it)
+  passwd USER [--random]        Sets a new password
+  role USER user|admin|light    Changes the role (admin: 2FA with Authelia)
+  email USER ADDRESS            Changes the e-mail address
+  disable USER, enable USER     Blocks or allows signing in
+  delete USER                   Deletes the user (their files too)
+  reset-2fa USER                Removes the user's 2FA devices (lost phone);
+                                admins register a new one at the next sign-in
+
+A password is read from stdin when it isn't a terminal (one line).
+EOF
+}
+
+# --- OpenCloud's API, as admin with an app token, from inside its container
+
+token() {
+    if [ ! -s "$TOKEN_FILE" ]; then
+        local out i
+        for i in 1 2 3 4 5; do
+            out="$(docker compose exec -T opencloud opencloud auth-app create --user-name admin --expiration 8760h 2>&1)" && break
+            sleep 5
+        done
+        (umask 077; printf '%s\n' "$out" | sed -n 's/^ *token: //p' > "$TOKEN_FILE")
+        [ -s "$TOKEN_FILE" ] || die "Couldn't create an app token for admin: $out"
+    fi
+    cat "$TOKEN_FILE"
+}
+
+# cfg_quote: a value for curl's config file (in double quotes)
+cfg_quote() { printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'; }
+
+# api METHOD PATH [JSON]: the response body on stdout; fails on HTTP >= 300.
+# The token and the body go through curl's config on stdin, not its command line.
+api() {
+    local method="$1" path="$2" body="${3-}" out code retry
+    for retry in 1 2; do
+        out="$({
+            printf 'user = "admin:%s"\n' "$(cfg_quote "$(token)")"
+            [ -z "$body" ] || printf 'data-raw = "%s"\n' "$(cfg_quote "$body")"
+        } | docker compose exec -T opencloud curl -sS -K - -X "$method" -H 'Content-Type: application/json' \
+            -w '\n%{http_code}' "http://127.0.0.1:9200$path")"
+        code="${out##*$'\n'}"
+        out="${out%$'\n'*}"
+        # A stale token (revoked, expired, or a new server): make a new one once
+        if [ "$code" = 401 ] && [ "$retry" = 1 ]; then rm -f "$TOKEN_FILE"; continue; fi
+        break
+    done
+    [ "$code" -lt 300 ] 2>/dev/null || die "OpenCloud: $method $path: HTTP $code $out"
+    printf '%s' "$out"
+}
+
+json() { yq -p json -o json -I0 "$@"; } # JSON in, compact JSON out
+
+user_id() { api GET "/graph/v1.0/users/$1" | yq -p json '.id'; }
+
+set_role() { # USER ROLE_ID
+    local id app
+    id="$(user_id "$1")"
+    app="$(api GET /graph/v1.0/applications | yq -p json '.value[0].id')"
+    export Y_ID="$id" Y_APP="$app" Y_ROLE="$2"
+    api POST "/graph/v1.0/users/$id/appRoleAssignments" \
+        "$(echo '{}' | json '.principalId = strenv(Y_ID) | .resourceId = strenv(Y_APP) | .appRoleId = strenv(Y_ROLE)')" > /dev/null
+}
+
+role_id() {
+    case "$1" in
+        admin) echo "$ROLE_ADMIN" ;;
+        user) echo "$ROLE_USER" ;;
+        light) echo "$ROLE_LIGHT" ;;
+        *) die "Role: user, admin or light" ;;
+    esac
+}
+
+# --- Authelia's user file and database
+
+users_yaml() { [ -f "$USERS_FILE" ] || die "No $USERS_FILE: run ./setup.sh"; cat "$USERS_FILE"; }
+
+# edit_user USER EXPRESSION: applies a yq expression to .users[USER]
+edit_user() {
+    export Y_USER="$1"
+    users_yaml | yq ".users[strenv(Y_USER)] |= ($2)" | write_users
+}
+
+has_user() {
+    export Y_USER="$1"
+    [ "$(users_yaml | yq '.users | has(strenv(Y_USER))')" = true ]
+}
+
+authelia_cli() { # runs authelia's own CLI with this server's config
+    docker compose exec -T -e AUTHELIA_NOTIFIER_FILESYSTEM_FILENAME=/tmp/cli-notifications.txt \
+        authelia authelia --config /config/configuration.yml "$@"
+}
+
+# --- Passwords
+
+read_password() { # [--random]: prints the password
+    local p p2
+    if [ "${1-}" = --random ]; then
+        p="$(docker run --rm "$(conf AUTHELIA_IMAGE)" authelia crypto rand --length 16 --charset alphanumeric |
+            sed -n 's/^Random Value: //p')"
+        [ -n "$p" ] || die "Couldn't make up a password"
+        echo "Password: $p" >&2
+    elif [ -t 0 ]; then
+        read -rsp "Password: " p; echo >&2
+        read -rsp "Again: " p2; echo >&2
+        [ "$p" = "$p2" ] || die "The passwords don't match"
+    else
+        IFS= read -r p || true
+    fi
+    [ -n "$p" ] || die "Empty password"
+    printf '%s' "$p"
+}
+
+valid_name() {
+    [[ "$1" =~ ^[A-Za-z0-9_.@-]+$ ]] || die "Usernames may only contain letters, digits and _ . @ -"
+}
+
+# --- Commands
+
+cmd_list() {
+    local oc au
+    oc="$(api GET '/graph/v1.0/users?$expand=appRoleAssignments' | yq -p json \
+        '.value[] | [.onPremisesSamAccountName, .displayName, (.mail // "-"), .accountEnabled, (.appRoleAssignments[0].appRoleId // "-")] | map(tostring) | join("\t")')"
+    if with_authelia; then
+        au="$(users_yaml | yq '.users | to_entries | .[] | [.key, (.value.disabled // false), ((.value.groups // []) | join(",") | select(. != "") // "-")] | map(tostring) | join("\t")')"
+    else
+        au=""
+    fi
+    printf '%s\n' "$oc" | awk -F'\t' -v au="$au" -v a="$ROLE_ADMIN" -v u="$ROLE_USER" -v l="$ROLE_LIGHT" -v with="$(with_authelia && echo 1)" '
+        BEGIN {
+            n = split(au, rows, "\n")
+            for (i = 1; i <= n; i++) { split(rows[i], f, "\t"); if (f[1] != "") { off[f[1]] = f[2]; groups[f[1]] = f[3] } }
+            role[a] = "admin"; role[u] = "user"; role[l] = "light"
+            printf "%-20s %-24s %-28s %-6s %-8s %s\n", "USER", "NAME", "E-MAIL", "ROLE", "ENABLED", (with ? "AUTHELIA" : "")
+        }
+        $1 != "" {
+            s = ""
+            if (with) s = !($1 in off) ? "missing" : (off[$1] == "true" ? "disabled" : "ok") (groups[$1] != "-" && $1 in off ? " (" groups[$1] ")" : "")
+            printf "%-20s %-24s %-28s %-6s %-8s %s\n", $1, $2, $3, ($5 in role ? role[$5] : "-"), ($4 == "true" ? "yes" : "no"), s
+        }'
+}
+
+cmd_add() {
+    local user="${1-}" name="" email="" role=user random="" pw body hash rid
+    [ -n "$user" ] || die "add USER"; shift
+    valid_name "$user"
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --name) name="$2"; shift 2 ;;
+            --email) email="$2"; shift 2 ;;
+            --role) role="$2"; shift 2 ;;
+            --random) random=--random; shift ;;
+            *) die "Unknown option $1" ;;
+        esac
+    done
+    rid="$(role_id "$role")"
+    [ -n "$name" ] || name="$user"
+    if with_authelia && has_user "$user"; then die "$user is already in $USERS_FILE"; fi
+    pw="$(read_password $random)"
+    if with_authelia; then
+        # Authelia checks the password; OpenCloud's own gets a random one nobody uses
+        hash="$(hash_password "$pw")"
+        [ -n "$hash" ] || die "Couldn't hash the password"
+        pw="$(head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n')"
+    fi
+    export Y_USER="$user" Y_NAME="$name" Y_EMAIL="$email" Y_HASH="$pw"
+    body="$(echo '{}' | json '.onPremisesSamAccountName = strenv(Y_USER) | .displayName = strenv(Y_NAME)
+        | .passwordProfile.password = strenv(Y_HASH) | .accountEnabled = true
+        | (if strenv(Y_EMAIL) != "" then .mail = strenv(Y_EMAIL) else . end)')"
+    api POST /graph/v1.0/users "$body" > /dev/null
+    echo "OpenCloud: created $user"
+    [ "$role" = user ] || set_role "$user" "$rid"
+    if with_authelia; then
+        export Y_HASH="$hash" Y_GROUP="$([ "$role" = admin ] && echo admins || true)"
+        users_yaml | yq '.users[strenv(Y_USER)] = {"displayname": strenv(Y_NAME), "email": strenv(Y_EMAIL),
+            "password": strenv(Y_HASH), "disabled": false,
+            "groups": ([strenv(Y_GROUP)] | map(select(. != "")))}' | write_users
+        echo "Authelia: added $user$([ "$role" = admin ] && echo ' (admins: 2FA required)' || true)"
+    fi
+}
+
+cmd_passwd() {
+    local user="${1-}" pw hash
+    [ -n "$user" ] || die "passwd USER"
+    valid_name "$user"
+    pw="$(read_password "${2-}")"
+    if with_authelia; then
+        hash="$(hash_password "$pw")"
+        [ -n "$hash" ] || die "Couldn't hash the password"
+        export Y_HASH="$hash"
+        if has_user "$user"; then
+            edit_user "$user" '.password = strenv(Y_HASH)'
+            echo "Authelia: new password for $user"
+        else
+            # In OpenCloud only (created in its web UI, or before Authelia):
+            # add them to Authelia with OpenCloud's name, e-mail and role
+            local u
+            u="$(api GET "/graph/v1.0/users/$user?\$expand=appRoleAssignments")"
+            export Y_USER="$user" Y_NAME="$(yq -p json '.displayName // ""' <<< "$u")" \
+                Y_EMAIL="$(yq -p json '.mail // ""' <<< "$u")" \
+                Y_GROUP="$([ "$(yq -p json '.appRoleAssignments[0].appRoleId // ""' <<< "$u")" = "$ROLE_ADMIN" ] && echo admins || true)"
+            users_yaml | yq '.users[strenv(Y_USER)] = {"displayname": strenv(Y_NAME), "email": strenv(Y_EMAIL),
+                "password": strenv(Y_HASH), "disabled": false,
+                "groups": ([strenv(Y_GROUP)] | map(select(. != "")))}' | write_users
+            echo "Authelia: added $user with a password$([ -n "$Y_GROUP" ] && echo ' (admins: 2FA required)' || true)"
+        fi
+    else
+        export Y_HASH="$pw"
+        api PATCH "/graph/v1.0/users/$(user_id "$user")" \
+            "$(echo '{}' | json '.passwordProfile.password = strenv(Y_HASH)')" > /dev/null
+        echo "OpenCloud: new password for $user"
+    fi
+}
+
+cmd_role() {
+    local user="${1-}" role="${2-}" rid
+    [ -n "$user" ] && [ -n "$role" ] || die "role USER user|admin|light"
+    valid_name "$user"
+    rid="$(role_id "$role")"
+    set_role "$user" "$rid"
+    echo "OpenCloud: $user is now $role"
+    if with_authelia && has_user "$user"; then
+        if [ "$role" = admin ]; then
+            edit_user "$user" '.groups = ((.groups // []) + ["admins"] | unique)'
+            echo "Authelia: $user is in admins (2FA required)"
+        else
+            edit_user "$user" '.groups = ((.groups // []) - ["admins"])'
+        fi
+    fi
+}
+
+cmd_email() {
+    local user="${1-}" email="${2-}"
+    [ -n "$user" ] && [ -n "$email" ] || die "email USER ADDRESS"
+    valid_name "$user"
+    export Y_EMAIL="$email"
+    api PATCH "/graph/v1.0/users/$(user_id "$user")" "$(echo '{}' | json '.mail = strenv(Y_EMAIL)')" > /dev/null
+    if with_authelia && has_user "$user"; then edit_user "$user" '.email = strenv(Y_EMAIL)'; fi
+    echo "$user: e-mail is now $email"
+}
+
+cmd_enable() { # USER true|false
+    local user="${1-}" on="$2"
+    [ -n "$user" ] || die "USER missing"
+    valid_name "$user"
+    export Y_FLAG="$on"
+    api PATCH "/graph/v1.0/users/$(user_id "$user")" "$(echo '{}' | json '.accountEnabled = (strenv(Y_FLAG) == "true")')" > /dev/null
+    if with_authelia && has_user "$user"; then edit_user "$user" '.disabled = (strenv(Y_FLAG) != "true")'; fi
+    echo "$user $([ "$on" = true ] && echo enabled || echo disabled)"
+}
+
+cmd_delete() {
+    local user="${1-}" answer
+    [ -n "$user" ] || die "delete USER"
+    valid_name "$user"
+    [ "$user" != admin ] || die "Not deleting admin"
+    if [ -t 0 ]; then
+        read -rp "Delete $user and their files? Type the username: " answer
+        [ "$answer" = "$user" ] || die "Not deleted"
+    fi
+    api DELETE "/graph/v1.0/users/$(user_id "$user")" > /dev/null
+    echo "OpenCloud: deleted $user"
+    if with_authelia && has_user "$user"; then
+        users_yaml | yq 'del(.users[strenv(Y_USER)])' | write_users
+        (reset_2fa "$user") > /dev/null 2>&1 || true
+        echo "Authelia: removed $user"
+    fi
+}
+
+reset_2fa() { # prints what was removed
+    local out
+    if out="$(authelia_cli storage user totp delete "$1" 2>&1)"; then
+        echo "Authelia: removed $1's TOTP app"
+    elif ! grep -q 'no TOTP configuration' <<< "$out"; then
+        die "Authelia: $(head -1 <<< "$out")"
+    fi
+    out="$(authelia_cli storage user webauthn delete "$1" --all 2>&1)" || die "Authelia: $(head -1 <<< "$out")"
+}
+
+cmd_reset_2fa() {
+    local user="${1-}"
+    [ -n "$user" ] || die "reset-2fa USER"
+    with_authelia || die "No Authelia on this server (COMPOSE_FILE in .env)"
+    valid_name "$user"
+    reset_2fa "$user"
+    echo "Authelia: $user has no 2FA devices now"
+}
+
+cmd="${1-help}"; shift || true
+case "$cmd" in
+    list) cmd_list ;;
+    add) cmd_add "$@" ;;
+    passwd) cmd_passwd "$@" ;;
+    role) cmd_role "$@" ;;
+    email) cmd_email "$@" ;;
+    disable) cmd_enable "${1-}" false ;;
+    enable) cmd_enable "${1-}" true ;;
+    delete) cmd_delete "${1-}" ;;
+    reset-2fa) cmd_reset_2fa "${1-}" ;;
+    help|-h|--help) usage ;;
+    *) usage >&2; exit 1 ;;
+esac

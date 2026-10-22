@@ -1,0 +1,55 @@
+# oc-custom behind SWAG, with OpenCloud's built-in sign-in. Settings are in
+# .env (copy .env.example, then run ./setup.sh). With Authelia (sign-in with
+# 2FA), .env adds compose.authelia.yaml through COMPOSE_FILE.
+name: ${OC_STACK}
+
+services:
+  opencloud:
+    image: ${OC_IMAGE}
+    container_name: ${OC_STACK}-opencloud
+    user: "${PUID}:${PGID}"
+    # Creates the config on the first start, then runs the server; with
+    # SMTP_HOST set also OpenCloud's own e-mails (notifications)
+    entrypoint:
+      - sh
+      - -c
+      - |
+        [ -f /etc/opencloud/opencloud.yaml ] || opencloud init --insecure false --admin-password "$$OC_ADMIN_PASSWORD" >/dev/null
+        [ -z "$$NOTIFICATIONS_SMTP_HOST" ] || export OC_ADD_RUN_SERVICES="$$OC_ADD_RUN_SERVICES,notifications"
+        exec opencloud server
+    # OpenCloud calls its own public address; this sends it to SWAG on this
+    # host instead of out and back in
+    extra_hosts:
+      - "${OC_DOMAIN}:host-gateway"
+    environment:
+      OC_URL: https://${OC_DOMAIN}
+      # Used on the first start only; changing it later has no effect
+      OC_ADMIN_PASSWORD: ${OC_ADMIN_PASSWORD}
+      # SWAG terminates TLS
+      PROXY_TLS: "false"
+      PROXY_HTTP_ADDR: 0.0.0.0:9200
+      # App tokens (users.sh, management tools) and impersonation
+      OC_ADD_RUN_SERVICES: auth-app
+      PROXY_ENABLE_APP_AUTH: "true"
+      AUTH_APP_ENABLE_IMPERSONATION: "true"
+      # OpenCloud's own e-mails (shares)
+      NOTIFICATIONS_SMTP_HOST: ${SMTP_HOST}
+      NOTIFICATIONS_SMTP_PORT: ${SMTP_PORT}
+      NOTIFICATIONS_SMTP_SENDER: ${SMTP_SENDER}
+      NOTIFICATIONS_SMTP_USERNAME: ${SMTP_USERNAME}
+      NOTIFICATIONS_SMTP_PASSWORD: ${SMTP_PASSWORD}
+      NOTIFICATIONS_SMTP_AUTHENTICATION: ${SMTP_AUTHENTICATION}
+      NOTIFICATIONS_SMTP_ENCRYPTION: ${SMTP_ENCRYPTION}
+    volumes:
+      - ./config:/etc/opencloud
+      - ./data:/var/lib/opencloud
+      # This server's branding (README "Branding"); empty: OpenCloud's look
+      - ./branding:/var/lib/opencloud/web/assets/themes/_branding:ro
+    networks: [default, swag]
+    restart: unless-stopped
+
+networks:
+  # SWAG's network: SWAG reaches the containers by name
+  swag:
+    name: ${SWAG_NETWORK}
+    external: true
