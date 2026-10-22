@@ -28,7 +28,9 @@ Based on OpenCloud **7.2.4** (reva v2.46.8, web v7.1.5); see `versions.env`. Ima
 Everything else is upstream's: the image is the official one with only `/usr/bin/opencloud` replaced, built from the same sources and with the same toolchain and target. `opencloud version` and `status.php` report `7.2.4+custom.<build>`.
 
 ## Deploying
-Compared with a compose file for the official image, two lines change:
+**A complete server behind SWAG, optionally with sign-in with 2FA (Authelia):** the [`deploy/`](deploy/) folder (compose files, Authelia's config, the SWAG site, `setup.sh` and `users.sh`). Its [README](deploy/README.md) walks through setting it up, users, 2FA, backups and updates.
+
+**Your own compose file:** compared with one for the official image, two lines change:
 ```yaml
 services:
   opencloud:
@@ -141,6 +143,7 @@ Builds are tested in a separate OpenCloud test environment (Docker Compose, not 
 - `test/browser <out dir> user:password …` signs in as each user in a fresh browser profile. It saves screenshots and records where they landed and whether files show as a table. With `ACTIONS="client1:Client folder/readme.txt"` it also opens that file's context menu and lists its actions (rename, move, delete…).
 - `test/check-permissions <user> <share>` lists what OpenCloud reports for each item in a share (`oc:permissions`) as the recipient sees it. A "Can upload" share shows `NV`, with no `D` or `W`.
 - `scripts/smoke-test <image>` starts an image with a fresh config and checks the version, the branding and the web UI (CI runs it on every build).
+- `test/deploy/run.sh [--image <image>] [--keep]` tests `deploy/` from scratch, about 10 minutes, Docker only: the real SWAG image (with a self-signed certificate; Let's Encrypt is skipped) and Mailpit on their own network, then the stack with Authelia and without it. It checks `setup.sh` and every `users.sh` command, and in a browser: a user signing in with a password only, "Change password" opening Authelia's page and changing the password there, a disabled user refused, the desktop app's sign-in (PKCE, its loopback redirect, refresh), the admin registering 2FA at the first sign-in, removing and re-registering it on Authelia's settings page and after `users.sh reset-2fa`; without Authelia, OpenCloud's own sign-in and password dialog. `--keep` leaves it running; `--clean` removes it.
 
 **What to check for each new build:**
 - **A "Can upload" recipient:** items report `NV` and no `D`/`W`. Rename, the Move action, drag and drop and cut/paste work; delete is neither offered nor allowed.
@@ -160,7 +163,8 @@ Builds are tested in a separate OpenCloud test environment (Docker Compose, not 
 - `scripts/build-native`, `Dockerfile`: the build.
 - `scripts/smoke-test`: the image check.
 - `branding/example`: an example branding folder.
-- `test/`: the test helpers (`local.env.example` for your test environment).
+- `deploy/`: a complete server behind SWAG, with or without Authelia (its own README).
+- `test/`: the test helpers (`local.env.example` for your test environment); `test/deploy/`: the test of `deploy/`.
 - `CLAUDE.md`: working notes for continuing development (decisions, findings, next steps).
 
 ## Status
@@ -181,13 +185,12 @@ Builds are tested in a separate OpenCloud test environment (Docker Compose, not 
 | 7.2.4, stable-7.2 (the coming 7.2.5) | All apply |
 | 8.1.0 (rolling) | All apply except `web/0003` (User Light → "Shared with me"); its code changed in 8.x and needs a rebase |
 
-**Planned: optional sign-in with 2FA through Authelia.** OpenCloud's built-in sign-in has no two-factor authentication. oc-custom will offer [Authelia](https://www.authelia.com/) (Apache-2.0) as an optional, tested companion:
+**Built, to be released as `7.2.4-4`: optional sign-in with 2FA through Authelia.** OpenCloud's built-in sign-in has no two-factor authentication. oc-custom offers [Authelia](https://www.authelia.com/) (Apache-2.0) as an optional, tested companion ([`deploy/`](deploy/README.md)):
 - **Without Authelia nothing changes:** OpenCloud's built-in sign-in and its own "Change password" dialog.
-- **With Authelia:** it runs in its own container in the same compose stack (not inside this image: it has its own security releases, data and process), under `https://<OpenCloud's name>/authelia`, so one DNS name and one certificate. OpenCloud runs with its built-in IdP off, without autoprovisioning and with the `default` role driver. Users still live in OpenCloud's own directory; Authelia's file backend holds their passwords, groups and 2FA devices. 2FA (TOTP) is required for an admins group only.
-- **A tested pair:** `versions.env` will pin the Authelia version each build is tested with. The repo will hold the reference setup (compose, Authelia config for OpenCloud's four clients, CSP, nginx snippet), and the tests will cover web sign-in, an admin's TOTP, removing and re-registering one's own TOTP device from Authelia's settings page, the desktop app's flow and the password link.
-- **Patch 6 (web, written, not released yet):** Settings → Preferences → "Change password" opens the URL in `WEB_OPTION_ACCOUNT_EDIT_LINK_HREF` (Authelia's password page, whose menu also has the user's own 2FA page) in a new tab, and the "Edit" button that setting would add to Settings → Profile is removed. Without the setting nothing changes, so servers without Authelia keep upstream's dialog.
-- **nginx / SWAG:** a plain `location /authelia { proxy_pass http://authelia:9091; }` next to OpenCloud's `location /`. SWAG's own Authelia files are forward-auth for protecting other apps and assume Authelia on its own subdomain, so they're not used here. Still to be checked against the real SWAG image.
-- Tested so far in a prototype (OpenCloud 7.2.4 / 7.2.4-3, Authelia 4.39.28): the admin app token, Graph user creation and impersonation still work with the built-in IdP off; web sign-in with a password only, and with password + TOTP for admins; the desktop app's PKCE flow with a random loopback port and token refresh; Nextcloud's argon2id and bcrypt password hashes in Authelia's user file.
+- **With Authelia:** it runs in its own container in the same compose stack (not inside this image: it has its own security releases, data and process), under `https://<OpenCloud's name>/authelia`, so one DNS name and one certificate. OpenCloud runs with its built-in IdP off, without autoprovisioning and with the `default` role driver. Users still live in OpenCloud's own directory; Authelia's file backend holds their passwords and groups, its database their 2FA devices. 2FA (TOTP) is required for admins only; users can add or remove their own authenticator app on Authelia's settings page.
+- **A tested pair:** `versions.env` pins the Authelia version (`AUTHELIA_IMAGE`) each build is tested with, and `test/deploy/run.sh` tests the pair behind the real SWAG image.
+- **Patch 6 (web):** Settings → Preferences → "Change password" opens the URL in `WEB_OPTION_ACCOUNT_EDIT_LINK_HREF` (Authelia's password page) in a new tab, and the "Edit" button that setting would add to Settings → Profile is removed.
+- **SWAG:** the site `deploy/` writes proxies `/authelia` to Authelia and the rest to OpenCloud. SWAG's own Authelia files are for protecting other apps and aren't used. SWAG's `proxy.conf` turns `http://` redirects into `https://`, which broke the desktop app's sign-in (it ends with a redirect to `http://127.0.0.1:<port>`); the site keeps those unchanged.
 
 **Next:**
 - **7.2.5:** decide whether it's worth a rebuild once it's released.

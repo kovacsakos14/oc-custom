@@ -1,0 +1,10 @@
+# Created on the server by setup.sh, docker compose and users.sh
+/.env
+/.admin-token
+/config/
+/data/
+/branding/
+/authelia/users/
+/authelia/data/
+/authelia/secrets/
+/swag/*.subdomain.conf

@@ -1,0 +1,8 @@
+# Test only (run.sh): SWAG is a container on the test network whose alias is
+# OC_DOMAIN, not this host's 443, and its certificate is self-signed
+services:
+  opencloud:
+    extra_hosts: !reset []
+    environment:
+      OC_INSECURE: "true"
+

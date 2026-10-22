@@ -1,0 +1,78 @@
+# Adds Authelia (sign-in with 2FA) to compose.yaml. Authelia serves
+# https://<OC_DOMAIN>/authelia and is OpenCloud's sign-in; OpenCloud keeps the
+# users, Authelia's user file holds their passwords and groups, its database
+# the 2FA devices. Manage both with ./users.sh.
+
+services:
+  opencloud:
+    depends_on: [authelia]
+    environment:
+      # Authelia instead of the built-in sign-in
+      OC_EXCLUDE_RUN_SERVICES: idp
+      OC_OIDC_ISSUER: https://${OC_DOMAIN}/authelia
+      PROXY_OIDC_REWRITE_WELLKNOWN: "true"
+      PROXY_OIDC_ACCESS_TOKEN_VERIFY_METHOD: jwt
+      PROXY_USER_OIDC_CLAIM: preferred_username
+      PROXY_USER_CS3_CLAIM: username
+      # Users are created in OpenCloud (users.sh), not on first sign-in, and
+      # keep the role OpenCloud gives them: the oidc role driver breaks the
+      # desktop app (opencloud-compose#111)
+      PROXY_AUTOPROVISION_ACCOUNTS: "false"
+      PROXY_ROLE_ASSIGNMENT_DRIVER: default
+      GRAPH_ASSIGN_DEFAULT_USER_ROLE: "true"
+      # Settings -> Preferences -> "Change password" opens Authelia's page (patch 6)
+      WEB_OPTION_ACCOUNT_EDIT_LINK_HREF: https://${OC_DOMAIN}/authelia/settings/security
+
+  authelia:
+    image: ${AUTHELIA_IMAGE}
+    container_name: ${OC_STACK}-authelia
+    # E-mail through SMTP_* when SMTP_HOST is set, otherwise one-time codes go
+    # to authelia/data/notification.txt. Set here, not in configuration.yml:
+    # Authelia allows only one notifier, and env values need no YAML quoting.
+    entrypoint:
+      - sh
+      - -c
+      - |
+        if [ -n "$$SMTP_HOST" ]; then
+          case "$$SMTP_ENCRYPTION" in
+            ssltls) scheme=submissions ;;
+            starttls) scheme=submission ;;
+            *) scheme=smtp
+               export AUTHELIA_NOTIFIER_SMTP_DISABLE_REQUIRE_TLS=true AUTHELIA_NOTIFIER_SMTP_DISABLE_STARTTLS=true ;;
+          esac
+          export AUTHELIA_NOTIFIER_SMTP_ADDRESS="$$scheme://$$SMTP_HOST:$$SMTP_PORT"
+          export AUTHELIA_NOTIFIER_SMTP_SENDER="$$SMTP_SENDER"
+          [ -z "$$SMTP_USERNAME" ] || export AUTHELIA_NOTIFIER_SMTP_USERNAME="$$SMTP_USERNAME" AUTHELIA_NOTIFIER_SMTP_PASSWORD="$$SMTP_PASSWORD"
+          # Start even when the mail server can't be reached: otherwise a mail
+          # outage stops sign-in too (only the one-time codes need e-mail)
+          export AUTHELIA_NOTIFIER_DISABLE_STARTUP_CHECK=true
+        else
+          export AUTHELIA_NOTIFIER_FILESYSTEM_FILENAME=/data/notification.txt
+        fi
+        exec /app/entrypoint.sh
+    environment:
+      # Owner of the files it writes: the same user as OpenCloud and users.sh
+      PUID: ${PUID}
+      PGID: ${PGID}
+      X_AUTHELIA_CONFIG_FILTERS: template
+      OC_DOMAIN: ${OC_DOMAIN}
+      SMTP_HOST: ${SMTP_HOST}
+      SMTP_PORT: ${SMTP_PORT}
+      SMTP_SENDER: ${SMTP_SENDER}
+      SMTP_USERNAME: ${SMTP_USERNAME}
+      SMTP_PASSWORD: ${SMTP_PASSWORD}
+      SMTP_ENCRYPTION: ${SMTP_ENCRYPTION}
+      AUTHELIA_IDENTITY_VALIDATION_RESET_PASSWORD_JWT_SECRET_FILE: /secrets/jwt
+      AUTHELIA_SESSION_SECRET_FILE: /secrets/session
+      AUTHELIA_STORAGE_ENCRYPTION_KEY_FILE: /secrets/storage
+      AUTHELIA_IDENTITY_PROVIDERS_OIDC_HMAC_SECRET_FILE: /secrets/hmac
+    volumes:
+      - ./authelia/configuration.yml:/config/configuration.yml:ro
+      # The folder, not the file: Authelia reloads the user file on changes
+      # only when it sees the folder's events
+      - ./authelia/users:/config/users
+      # Its database (2FA devices, keep it in backups) and notification.txt
+      - ./authelia/data:/data
+      - ./authelia/secrets:/secrets:ro
+    networks: [default, swag]
+    restart: unless-stopped
