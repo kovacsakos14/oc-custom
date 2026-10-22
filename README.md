@@ -180,6 +180,14 @@ Builds are tested in a separate OpenCloud test environment (Docker Compose, not 
 | 7.2.4, stable-7.2 (the coming 7.2.5) | All apply |
 | 8.1.0 (rolling) | All apply except `web/0003` (User Light → "Shared with me"); its code changed in 8.x and needs a rebase |
 
+**Planned: optional sign-in with 2FA through Authelia.** OpenCloud's built-in sign-in has no two-factor authentication. oc-custom will offer [Authelia](https://www.authelia.com/) (Apache-2.0) as an optional, tested companion:
+- **Without Authelia nothing changes:** OpenCloud's built-in sign-in and its own "Change password" dialog.
+- **With Authelia:** it runs in its own container in the same compose stack (not inside this image: it has its own security releases, data and process), under `https://<OpenCloud's name>/authelia`, so one DNS name and one certificate. OpenCloud runs with its built-in IdP off, without autoprovisioning and with the `default` role driver. Users still live in OpenCloud's own directory; Authelia's file backend holds their passwords, groups and 2FA devices. 2FA (TOTP) is required for an admins group only.
+- **A tested pair:** `versions.env` will pin the Authelia version each build is tested with. The repo will hold the reference setup (compose, Authelia config for OpenCloud's four clients, CSP, nginx snippet), and the tests will cover web sign-in, an admin's TOTP, the desktop app's flow and the password link.
+- **Patch 6 (web):** the account page's "Change password" opens a URL from the web config (Authelia's password page). Without that setting it does nothing, so servers without Authelia keep upstream's dialog.
+- **nginx / SWAG:** a plain `location /authelia { proxy_pass http://authelia:9091; }` next to OpenCloud's `location /`. SWAG's own Authelia files are forward-auth for protecting other apps and assume Authelia on its own subdomain, so they're not used here. Still to be checked against the real SWAG image.
+- Tested so far in a prototype (OpenCloud 7.2.4 / 7.2.4-3, Authelia 4.39.28): the admin app token, Graph user creation and impersonation still work with the built-in IdP off; web sign-in with a password only, and with password + TOTP for admins; the desktop app's PKCE flow with a random loopback port and token refresh; Nextcloud's argon2id and bcrypt password hashes in Authelia's user file.
+
 **Next:**
 - **7.2.5:** decide whether it's worth a rebuild once it's released.
 - **The next production release** (due mid-November 2026, probably 8.x): rebase `web/0003`, test it, and snapshot servers before upgrading, since 7.2 → 8 is one-way.
