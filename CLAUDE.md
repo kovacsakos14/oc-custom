@@ -54,6 +54,7 @@ Context for working on this repo. User-facing docs are in README.md; this file h
   - the branding shows on the sign-in page and in the web UI; without it, the sign-in page looks like upstream's.
 - **The test environment's end-to-end tests** pass on it (details in `CLAUDE.local.md`).
 - **7.2.4-2 (sign-in background image):** tested through `IDP_ASSET_PATH` and then on the released image with `test/browser`. The theme's image shows and the hexagon goes; `IDP_LOGIN_BACKGROUND_URL` still wins; without branding the page is upstream's. The rest of 7.2.4-2 is 7.2.4-1 unchanged (only `patches/server/0001` changed).
+- **Patch 6 (2026-10-22, test image `:test-22cfdf6`, on the Authelia prototype's stack):** with `WEB_OPTION_ACCOUNT_EDIT_LINK_HREF` the server passes `accountEditLink` in `config.json`; Preferences → "Change password" is a link (new tab) that opened Authelia's `/authelia/settings/security` with alice's session; Profile has no "Edit". Without the setting: the dialog opens as upstream's, and Profile has no "Edit" either.
 - **CI:**
   - build ~8 min cold, ~3 min with caches (manual runs only: since 2026-10-21 releases build without caches, and the node image and pnpm are pinned by digest/hash; untested in CI until the next build);
   - the smoke test checks the version, the branding (including the background image) and the web UI;
