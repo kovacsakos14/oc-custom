@@ -1,0 +1,64 @@
+diff --git a/packages/web-runtime/src/services/auth/authService.ts b/packages/web-runtime/src/services/auth/authService.ts
+index a84b295..af98739 100644
+--- a/packages/web-runtime/src/services/auth/authService.ts
++++ b/packages/web-runtime/src/services/auth/authService.ts
+@@ -331,6 +331,13 @@ export class AuthService implements AuthServiceInterface {
+     const endSessionEndpoint = await this.userManager.metadataService?.getEndSessionEndpoint()
+     if (!endSessionEndpoint) {
+       await this.userManager.removeUser()
++      // oc-custom: an identity provider without a sign-out endpoint (Authelia) keeps its
++      // own session, so the next sign-in would skip the password. With logoutUrl set
++      // (Authelia's /logout?rd=…), sign out there as well.
++      const logoutUrl = this.configStore.options.logoutUrl
++      if (logoutUrl) {
++        return window.location.assign(logoutUrl)
++      }
+       return this.router.push({ name: 'logout' })
+     }
+ 
+diff --git a/packages/web-runtime/tests/unit/services/auth/authService.spec.ts b/packages/web-runtime/tests/unit/services/auth/authService.spec.ts
+index aaf253c..d7c02e9 100644
+--- a/packages/web-runtime/tests/unit/services/auth/authService.spec.ts
++++ b/packages/web-runtime/tests/unit/services/auth/authService.spec.ts
+@@ -161,4 +161,41 @@ describe('AuthService', () => {
+       expect(mockUpdateContext).toHaveBeenCalledWith('access-token', 'session-id', true)
+     })
+   })
++
++  describe('logoutUser (oc-custom)', () => {
++    const getService = (logoutUrl?: string) => {
++      const authService = new AuthService()
++      const removeUser = vi.fn()
++      Object.defineProperty(authService, 'userManager', {
++        value: mock<UserManager>({
++          metadataService: { getEndSessionEndpoint: vi.fn().mockResolvedValue(undefined) },
++          removeUser
++        })
++      })
++      const router = mock<Router>()
++      createTestingPinia()
++      const configStore = useConfigStore()
++      configStore.options = { logoutUrl }
++      initAuthService({ authService, configStore, router })
++      return { authService, removeUser, router }
++    }
++
++    it('without a sign-out endpoint, goes to logoutUrl when set', async () => {
++      const assign = vi.fn()
++      vi.stubGlobal('location', { ...window.location, assign })
++      const { authService, removeUser, router } = getService('https://idp.test/logout?rd=x')
++      await authService.logoutUser()
++      expect(removeUser).toHaveBeenCalled()
++      expect(assign).toHaveBeenCalledWith('https://idp.test/logout?rd=x')
++      expect(router.push).not.toHaveBeenCalled()
++      vi.unstubAllGlobals()
++    })
++
++    it('without a sign-out endpoint and logoutUrl, shows the logout page as upstream', async () => {
++      const { authService, removeUser, router } = getService()
++      await authService.logoutUser()
++      expect(removeUser).toHaveBeenCalled()
++      expect(router.push).toHaveBeenCalledWith({ name: 'logout' })
++    })
++  })
+ })

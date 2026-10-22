@@ -135,6 +135,11 @@ check "OpenCloud's sign-in configuration is Authelia's" \
 check "OpenCloud runs notifications (SMTP set) and not its own sign-in (idp)" \
     'services="$(docker compose exec -T opencloud opencloud list)"; grep -q " notifications " <<< "$services" && ! grep -q " idp " <<< "$services"'
 check "users.sh email admin" './users.sh email admin admin@deploy.test'
+check "Authelia has no OIDC sign-out endpoint; the web signs out at its /logout (config.json logoutUrl)" \
+    '! curl_ "https://$DOMAIN/.well-known/openid-configuration" | grep -q end_session_endpoint &&
+     curl_ "https://$DOMAIN/config.json" | grep -Eq "\"logoutUrl\": ?\"https://$DOMAIN/authelia/logout\\?rd="'
+check "no Calendar (capability support-radicale off)" \
+    'curl_ -u "admin:$(cat .admin-token)" "https://$DOMAIN/ocs/v1.php/cloud/capabilities?format=json" | grep -Eq "\"support-radicale\": ?false"'
 check "users.sh add alice (password on stdin)" 'echo Alice-pass1 | ./users.sh add alice --name "Alice Example" --email alice@deploy.test'
 check "users.sh add bob as User Light (--random)" './users.sh add bob --role light --email bob@deploy.test --random < /dev/null'
 check "users.sh disable bob" './users.sh disable bob'
@@ -142,7 +147,7 @@ list="$(./users.sh list)"
 echo "$list" | sed 's/^/        /'
 check "list: alice user, bob light and disabled on both sides" \
     'grep -Eq "^alice .* user +yes +ok$" <<< "$list" && grep -Eq "^bob .* light +no +disabled$" <<< "$list"'
-step "alice: password only, Profile without Edit, Change password on Authelia's page" user.js \
+step "alice: password only, Profile without Edit, Change password on Authelia's page, Log out ends Authelia's session" user.js \
     USER_NAME=alice USER_PASSWORD=Alice-pass1 USER_NEW_PASSWORD=Alice-pass2 USER_EMAIL=alice@deploy.test
 step "bob (disabled) can't sign in" disabled.js USER_NAME=bob USER_PASSWORD=whatever
 step "the desktop app's sign-in (PKCE, loopback redirect, refresh)" desktop.js USER_NAME=alice USER_PASSWORD=Alice-pass2
