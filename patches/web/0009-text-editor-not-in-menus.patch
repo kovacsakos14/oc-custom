@@ -1,0 +1,25 @@
+diff --git a/packages/web-app-text-editor/src/index.ts b/packages/web-app-text-editor/src/index.ts
+index 12ad36a..191a583 100644
+--- a/packages/web-app-text-editor/src/index.ts
++++ b/packages/web-app-text-editor/src/index.ts
+@@ -66,7 +66,8 @@ export default defineWebApplication({
+       const config = applicationConfig || {}
+       extensions.push(...(config.extraExtensions || []).map((ext: string) => ({ extension: ext })))
+ 
+-      let primaryExtensions: string[] = config.primaryExtensions || ['txt', 'md']
++      // oc-custom: no "New" entries for text files (they still open in the editor)
++      let primaryExtensions: string[] = config.primaryExtensions || []
+ 
+       if (typeof primaryExtensions === 'string') {
+         primaryExtensions = [primaryExtensions]
+@@ -125,7 +126,9 @@ export default defineWebApplication({
+ 
+     const menuItems = computed<AppMenuItemExtension[]>(() => {
+       const items: AppMenuItemExtension[] = []
+-      if (userStore.user && spacesStore.personalSpace) {
++      // oc-custom: not in the app menu; text files still open in the editor
++      const showInAppMenu = false
++      if (showInAppMenu && userStore.user && spacesStore.personalSpace) {
+         items.push({
+           id: `app.${appInfo.id}.menuItem`,
+           type: 'appMenuItem',
