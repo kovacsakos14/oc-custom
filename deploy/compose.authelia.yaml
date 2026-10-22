@@ -22,6 +22,9 @@ services:
       GRAPH_ASSIGN_DEFAULT_USER_ROLE: "true"
       # Settings -> Preferences -> "Change password" opens Authelia's page (patch 6)
       WEB_OPTION_ACCOUNT_EDIT_LINK_HREF: https://${OC_DOMAIN}/authelia/settings/security
+      # "Log out" also ends Authelia's session (patch 10), so the next sign-in
+      # asks for the password and another user can sign in
+      WEB_OPTION_LOGOUT_URL: https://${OC_DOMAIN}/authelia/logout?rd=https%3A%2F%2F${OC_DOMAIN}%2F
 
   authelia:
     image: ${AUTHELIA_IMAGE}

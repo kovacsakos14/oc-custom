@@ -1,8 +1,12 @@
 // Signs in to OpenCloud as each given user in a fresh browser profile and
-// records what they see: the sign-in page, where they land, and the file view
-// mode (table or tiles). Screenshots and result.json go to /out.
+// records what they see: the sign-in page, where they land, the file view
+// mode (table or tiles), the left menu, the app menu and what "Shared with
+// me" offers. Screenshots and result.json go to /out.
 // Run by test/browser in zenika/alpine-chrome:with-puppeteer.
 //   USERS="admin:secret client1:secret"
+//   NEW=1                     also list the "New" menu in Personal
+//   SEARCH="alice:dave"       also type "dave" into the share dialog of alice's
+//                             first personal item and list who it offers
 const fs = require('fs')
 const puppeteer = require('puppeteer')
 
@@ -47,6 +51,56 @@ async function main() {
         tiles: !!(await page.$('.oc-tiles, #tiles-view')),
         favicon: await page.$eval('link[rel~=icon]', (l) => l.getAttribute('href')).catch(() => null),
         logos: await page.$$eval('img', (imgs) => imgs.map((i) => i.getAttribute('src'))),
+        // the menu's links (language-independent)
+        nav: await page.$$eval('#web-nav-sidebar .oc-sidebar-nav-item a', (els) => els.map((e) => new URL(e.href).pathname)),
+      }
+      const r = result.users[user.name]
+      // The app menu (top left)
+      await page.locator('#_appSwitcherButton').click()
+      await page.waitForSelector('#app-switcher-dropdown .applications-list', { visible: true, timeout: 10000 })
+      r.apps = await page.$$eval('#app-switcher-dropdown .applications-list li', (els) => els.map((e) => e.innerText.trim()))
+      await page.keyboard.press('Escape')
+      await new Promise((res) => setTimeout(res, 500))
+      // "Shared with me": the hide button and the Shares / Hidden Shares switch
+      await page.locator('#web-nav-sidebar a[href*="/files/shares"]').click()
+      await page.waitForFunction(() => location.pathname.startsWith('/files/shares/with-me'))
+      await new Promise((res) => setTimeout(res, 3000))
+      r.sharedWithMe = {
+        items: await page.$$eval('[data-test-resource-name]', (els) => els.map((e) => e.getAttribute('data-test-resource-name'))),
+        hideButtons: (await page.$$('.oc-files-actions-hide-share-trigger')).length,
+        visibilityFilter: !!(await page.$('.share-visibility-filter')),
+      }
+      await page.screenshot({ path: `/out/${user.name}-shared-with-me.png` })
+      const hasPersonal = r.nav.includes('/files/spaces/personal')
+      if (process.env.NEW && hasPersonal) {
+        await page.locator('#web-nav-sidebar a[href*="/files/spaces/personal"]').click()
+        await page.waitForFunction(() => location.pathname.startsWith('/files/spaces/personal'))
+        await new Promise((res) => setTimeout(res, 2000))
+        // the "New" button: the one that opens the create list
+        await page.locator('#web-nav-sidebar button, .files-app-bar button').filter((b) => /^(New|Neu)$/.test(b.innerText.trim())).click()
+        await page.waitForSelector('#create-or-upload-drop', { visible: true, timeout: 10000 })
+        r.newMenu = await page.$$eval('#create-or-upload-drop li', (els) => els.map((e) => e.innerText.trim()).filter(Boolean))
+        await page.screenshot({ path: `/out/${user.name}-new.png` })
+        await page.keyboard.press('Escape')
+        await new Promise((res) => setTimeout(res, 500))
+      }
+      for (const spec of (process.env.SEARCH || '').split(' ').filter((s) => s.startsWith(user.name + ':'))) {
+        const query = spec.slice(user.name.length + 1)
+        if (!(await page.evaluate(() => location.pathname.startsWith('/files/spaces/personal')))) {
+          await page.locator('#web-nav-sidebar a[href*="/files/spaces/personal"]').click()
+          await page.waitForFunction(() => location.pathname.startsWith('/files/spaces/personal'))
+          await new Promise((res) => setTimeout(res, 2000))
+        }
+        const row = await page.waitForSelector('tr:has([data-test-resource-name])', { timeout: 30000 })
+        await row.click({ button: 'right' })
+        await page.waitForSelector('#oc-files-context-menu', { timeout: 10000 })
+        await page.locator('#oc-files-context-menu .oc-files-actions-show-shares-trigger').click()
+        const input = await page.waitForSelector('#files-share-invite-input input, input#files-share-invite-input', { timeout: 30000 })
+        await input.type(query, { delay: 50 })
+        await new Promise((res) => setTimeout(res, 3000))
+        await page.screenshot({ path: `/out/${user.name}-search.png` })
+        r.search = r.search || {}
+        r.search[query] = await page.$$eval('.vs__dropdown-option', (els) => els.map((e) => e.innerText.replace(/\s+/g, ' ').trim()))
       }
       // ACTIONS="client1:Client folder/readme.txt": open the share, right-click the file and
       // record the actions its context menu offers
@@ -54,7 +108,7 @@ async function main() {
         const [share, file] = spec.slice(user.name.length + 1).split('/')
         // in-app, as a person would: page.goto doesn't settle inside the app
         if (!(await page.evaluate(() => location.pathname.startsWith('/files/shares/with-me')))) {
-          await page.locator('a[href*="/files/shares/with-me"]').click()
+          await page.locator('#web-nav-sidebar a[href*="/files/shares"]').click()
           await page.waitForFunction(() => location.pathname.startsWith('/files/shares/with-me'))
         }
         await page.locator(`[data-test-resource-name="${share}"]`).click()

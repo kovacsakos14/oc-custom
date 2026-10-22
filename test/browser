@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
 # Runs test/browser.js against the test OpenCloud (OC_URL in test/local.env):
 # signs in as each user in a fresh browser profile and records the sign-in
-# page and where they land.
+# page, where they land, the menus and "Shared with me" (see browser.js).
 #   test/browser OUT_DIR admin:password client1:password
 #   ACTIONS="client1:Client folder/readme.txt" test/browser …   # also list the file's actions
+#   NEW=1 test/browser …                                         # also list the "New" menu
+#   SEARCH="admin:client1" test/browser …                        # also search the share dialog
 set -euo pipefail
 
 here="$(cd "$(dirname "$0")" && pwd)"
@@ -12,5 +14,5 @@ source "$here/lib.sh"
 out="$(mkdir -p "$1" && cd "$1" && pwd)"
 shift
 docker run --rm --network host -u "$(id -u):$(id -g)" -v "$here:/usr/src/app/t:ro" -v "$out:/out" \
-    -e BASE="${BASE:-$OC_URL}" -e USERS="$*" -e ACTIONS="${ACTIONS:-}" \
+    -e BASE="${BASE:-$OC_URL}" -e USERS="$*" -e ACTIONS="${ACTIONS:-}" -e NEW="${NEW:-}" -e SEARCH="${SEARCH:-}" \
     zenika/alpine-chrome:with-puppeteer node /usr/src/app/t/browser.js
