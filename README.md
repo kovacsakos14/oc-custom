@@ -23,7 +23,7 @@ Based on OpenCloud **7.2.4** (reva v2.46.8, web v7.1.5); see `versions.env`. Ima
 | 3 | **The table is the default file view** instead of tiles. Users who already picked a view keep it (it's stored in their browser). | `patches/web/0002-…` |
 | 4 | **Accounts without a personal space (User Light) land on "Shared with me"** instead of the empty Spaces list. Others are unchanged. | `patches/web/0003-…` |
 | 5 | **The sign-in page follows the branding:** its tab title, tab icon, colours, footer and, from 7.2.4-2, a background image (see [Branding](#branding)). Without branding it looks exactly as upstream's. | `patches/server/0001-…` |
-| 6 | **"Change password" can open an external password page** (not released yet; for the planned [Authelia](#status) setup). When `WEB_OPTION_ACCOUNT_EDIT_LINK_HREF` is set, Settings → Preferences → "Change password" opens that URL in a new tab instead of OpenCloud's dialog, and the row shows even if OpenCloud's own password change is turned off. The "Edit" button upstream shows for that setting on Settings → Profile is removed. Without the setting nothing changes. | `patches/web/0004-…` |
+| 6 | **"Change password" can open an external password page** (from 7.2.4-4; for the optional [Authelia](deploy/README.md) setup). When `WEB_OPTION_ACCOUNT_EDIT_LINK_HREF` is set, Settings → Preferences → "Change password" opens that URL in a new tab instead of OpenCloud's dialog, and the row shows even if OpenCloud's own password change is turned off. The "Edit" button upstream shows for that setting on Settings → Profile is removed. Without the setting nothing changes. | `patches/web/0004-…` |
 
 Everything else is upstream's: the image is the official one with only `/usr/bin/opencloud` replaced, built from the same sources and with the same toolchain and target. `opencloud version` and `status.php` report `7.2.4+custom.<build>`.
 
@@ -34,7 +34,7 @@ Everything else is upstream's: the image is the official one with only `/usr/bin
 ```yaml
 services:
   opencloud:
-    image: ghcr.io/kovacsakos14/oc-custom:7.2.4-3   # was: opencloudeu/opencloud:7.2.4
+    image: ghcr.io/kovacsakos14/oc-custom:7.2.4-4   # was: opencloudeu/opencloud:7.2.4
     volumes:
       - ./config:/etc/opencloud
       - ./data:/var/lib/opencloud
@@ -168,7 +168,7 @@ Builds are tested in a separate OpenCloud test environment (Docker Compose, not 
 - `CLAUDE.md`: working notes for continuing development (decisions, findings, next steps).
 
 ## Status
-**Released:** `7.2.4-3` (2026-10-21): the sign-in page takes background images and the favicon only from the server itself (no `https://` URLs, `%` escapes or `..`); the web is built with a pinned node image and pnpm, releases without caches. `7.2.4-2` (2026-10-21): adds the sign-in background image (`common.signin.backgroundImage`) to patch 5; otherwise the same as `7.2.4-1`.
+**Released:** `7.2.4-4` (2026-10-22): patch 6 (["Change password" can open an external password page](#whats-changed)), for the optional Authelia setup in [`deploy/`](deploy/README.md), tested with Authelia 4.39.28 (`AUTHELIA_IMAGE` in `versions.env`); otherwise the same as `7.2.4-3`. `7.2.4-3` (2026-10-21): the sign-in page takes background images and the favicon only from the server itself (no `https://` URLs, `%` escapes or `..`); the web is built with a pinned node image and pnpm, releases without caches. `7.2.4-2` (2026-10-21): adds the sign-in background image (`common.signin.backgroundImage`) to patch 5; otherwise the same as `7.2.4-1`.
 
 `7.2.4-1` (2026-10-21), OpenCloud 7.2.4 with patches 1–5. Tested:
 - what a "Can upload" recipient is told and can do (rename and move yes, delete no);
@@ -185,7 +185,7 @@ Builds are tested in a separate OpenCloud test environment (Docker Compose, not 
 | 7.2.4, stable-7.2 (the coming 7.2.5) | All apply |
 | 8.1.0 (rolling) | All apply except `web/0003` (User Light → "Shared with me"); its code changed in 8.x and needs a rebase |
 
-**Built, to be released as `7.2.4-4`: optional sign-in with 2FA through Authelia.** OpenCloud's built-in sign-in has no two-factor authentication. oc-custom offers [Authelia](https://www.authelia.com/) (Apache-2.0) as an optional, tested companion ([`deploy/`](deploy/README.md)):
+**Optional sign-in with 2FA through Authelia (from 7.2.4-4).** OpenCloud's built-in sign-in has no two-factor authentication. oc-custom offers [Authelia](https://www.authelia.com/) (Apache-2.0) as an optional, tested companion ([`deploy/`](deploy/README.md)):
 - **Without Authelia nothing changes:** OpenCloud's built-in sign-in and its own "Change password" dialog.
 - **With Authelia:** it runs in its own container in the same compose stack (not inside this image: it has its own security releases, data and process), under `https://<OpenCloud's name>/authelia`, so one DNS name and one certificate. OpenCloud runs with its built-in IdP off, without autoprovisioning and with the `default` role driver. Users still live in OpenCloud's own directory; Authelia's file backend holds their passwords and groups, its database their 2FA devices. 2FA (TOTP) is required for admins only; users can add or remove their own authenticator app on Authelia's settings page.
 - **A tested pair:** `versions.env` pins the Authelia version (`AUTHELIA_IMAGE`) each build is tested with, and `test/deploy/run.sh` tests the pair behind the real SWAG image.
