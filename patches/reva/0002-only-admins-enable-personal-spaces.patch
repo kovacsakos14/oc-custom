@@ -1,0 +1,122 @@
+diff --git a/pkg/storage/utils/decomposedfs/spaces.go b/pkg/storage/utils/decomposedfs/spaces.go
+index ad40ab3..a2549cc 100644
+--- a/pkg/storage/utils/decomposedfs/spaces.go
++++ b/pkg/storage/utils/decomposedfs/spaces.go
+@@ -639,6 +639,18 @@ func (fs *Decomposedfs) UpdateStorageSpace(ctx context.Context, req *provider.Up
+ 		}, nil
+ 	}
+ 
++	// oc-custom: restoring a personal space needs the permission that disabling it
++	// needs (canDeleteSpace), for its owner too. Otherwise a user whose space an
++	// admin disabled (e.g. when changing them to a user type without one) could
++	// enable it again.
++	if restore {
++		if typ, _ := spaceNode.SpaceRoot.XattrString(ctx, prefixes.SpaceTypeAttr); typ == _spaceTypePersonal && !fs.p.DeleteAllHomeSpaces(ctx) {
++			return &provider.UpdateStorageSpaceResponse{
++				Status: &v1beta11.Status{Code: v1beta11.Code_CODE_PERMISSION_DENIED, Message: "only an admin can enable a personal space"},
++			}, nil
++		}
++	}
++
+ 	if !permissions.IsManager(sp) {
+ 		// We are not a space manager. We need to check for additional permissions.
+ 		k := []string{prefixes.NameAttr, prefixes.SpaceDescriptionAttr}
+diff --git a/pkg/storage/utils/decomposedfs/spaces_custom_test.go b/pkg/storage/utils/decomposedfs/spaces_custom_test.go
+new file mode 100644
+index 0000000..a0f87a4
+--- /dev/null
++++ b/pkg/storage/utils/decomposedfs/spaces_custom_test.go
+@@ -0,0 +1,93 @@
++package decomposedfs_test
++
++// oc-custom: tests for the oc-custom change in UpdateStorageSpace, in their own
++// file so the patch doesn't conflict with upstream changes to spaces_test.go.
++
++import (
++	"context"
++
++	cs3permissions "github.com/cs3org/go-cs3apis/cs3/permissions/v1beta1"
++	rpcv1beta1 "github.com/cs3org/go-cs3apis/cs3/rpc/v1beta1"
++	provider "github.com/cs3org/go-cs3apis/cs3/storage/provider/v1beta1"
++	typesv1beta1 "github.com/cs3org/go-cs3apis/cs3/types/v1beta1"
++	. "github.com/onsi/ginkgo/v2"
++	. "github.com/onsi/gomega"
++	ctxpkg "github.com/opencloud-eu/reva/v2/pkg/ctx"
++	"github.com/opencloud-eu/reva/v2/pkg/storage/utils/decomposedfs/node"
++	helpers "github.com/opencloud-eu/reva/v2/pkg/storage/utils/decomposedfs/testhelpers"
++	"github.com/stretchr/testify/mock"
++	"google.golang.org/grpc"
++)
++
++var _ = Describe("Restoring a disabled space (oc-custom)", func() {
++	var (
++		env   *helpers.TestEnv
++		admin context.Context
++	)
++
++	restore := func(ctx context.Context, id *provider.StorageSpaceId) rpcv1beta1.Code {
++		res, err := env.Fs.UpdateStorageSpace(ctx, &provider.UpdateStorageSpaceRequest{
++			Opaque: &typesv1beta1.Opaque{Map: map[string]*typesv1beta1.OpaqueEntry{
++				"restore": {Decoder: "plain", Value: []byte("true")},
++			}},
++			StorageSpace: &provider.StorageSpace{Id: id},
++		})
++		Expect(err).ToNot(HaveOccurred())
++		return res.GetStatus().GetCode()
++	}
++
++	BeforeEach(func() {
++		var err error
++		env, err = helpers.NewTestEnv(nil)
++		Expect(err).ToNot(HaveOccurred())
++		admin = ctxpkg.ContextSetUser(context.Background(), env.DeleteHomeSpacesUser)
++		// the admin may disable and enable any space; the owner may create spaces
++		env.PermissionsClient.On("CheckPermission", mock.Anything, mock.Anything, mock.Anything).Return(
++			func(ctx context.Context, in *cs3permissions.CheckPermissionRequest, opts ...grpc.CallOption) *cs3permissions.CheckPermissionResponse {
++				user := ctxpkg.ContextMustGetUser(ctx).GetId().GetOpaqueId()
++				switch {
++				case user == helpers.DeleteHomeSpacesUserID && (in.Permission == "Drives.DeletePersonal" || in.Permission == "Drives.ReadWriteEnabled"),
++					user == helpers.OwnerID && (in.Permission == "Drives.Create" || in.Permission == "Drives.List"):
++					return &cs3permissions.CheckPermissionResponse{Status: &rpcv1beta1.Status{Code: rpcv1beta1.Code_CODE_OK}}
++				}
++				return &cs3permissions.CheckPermissionResponse{Status: &rpcv1beta1.Status{Code: rpcv1beta1.Code_CODE_PERMISSION_DENIED}}
++			},
++			nil)
++		// the owner manages their spaces
++		env.Permissions.On("AssemblePermissions", mock.Anything, mock.Anything, mock.Anything).Return(
++			func(ctx context.Context, n *node.Node) *provider.ResourcePermissions {
++				if ctxpkg.ContextMustGetUser(ctx).GetId().GetOpaqueId() == helpers.OwnerID {
++					return node.OwnerPermissions()
++				}
++				return node.NoPermissions()
++			}, nil)
++	})
++
++	AfterEach(func() {
++		if env != nil {
++			env.Cleanup()
++		}
++	})
++
++	It("lets only an admin enable a personal space again, not its owner", func() {
++		spaces, err := env.Fs.ListStorageSpaces(env.Ctx, nil, false)
++		Expect(err).ToNot(HaveOccurred())
++		Expect(spaces).To(HaveLen(1))
++		Expect(spaces[0].SpaceType).To(Equal("personal"))
++		id := spaces[0].GetId()
++
++		Expect(env.Fs.DeleteStorageSpace(admin, &provider.DeleteStorageSpaceRequest{Id: id})).To(Succeed())
++		Expect(restore(env.Ctx, id)).To(Equal(rpcv1beta1.Code_CODE_PERMISSION_DENIED))
++		Expect(restore(admin, id)).To(Equal(rpcv1beta1.Code_CODE_OK))
++	})
++
++	It("still lets a project space's manager enable it again", func() {
++		res, err := env.Fs.CreateStorageSpace(env.Ctx, &provider.CreateStorageSpaceRequest{Type: "project", Name: "Project"})
++		Expect(err).ToNot(HaveOccurred())
++		Expect(res.GetStatus().GetCode()).To(Equal(rpcv1beta1.Code_CODE_OK))
++		id := res.GetStorageSpace().GetId()
++
++		Expect(env.Fs.DeleteStorageSpace(env.Ctx, &provider.DeleteStorageSpaceRequest{Id: id})).To(Succeed())
++		Expect(restore(env.Ctx, id)).To(Equal(rpcv1beta1.Code_CODE_OK))
++	})
++})

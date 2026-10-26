@@ -61,6 +61,7 @@ Built into the image (from 7.2.4-6): no settings file and no environment variabl
 | 14 | **The share role "Can't delete"**, with its icon. | – | `patches/server/0003-…` |
 | 15 | **The type table:** one place in the web code that says which change applies to which user type (`ocCustomFeatures` in web-pkg). | – | `patches/web/0011-…` |
 | 16 | **Apps open a file for editing only with write permission** (`W`); upstream also accepted rename/move (`NV`) alone. | everyone (follows the share) | `patches/web/0012-…` |
+| 17 | **Only an admin can enable a disabled personal space,** its owner too can't (upstream let a space's manager enable it, and the owner manages their personal space). Disabling one already needed an admin. `deploy/users.sh` disables a user's personal space when they become a Client, Employee or User Light. | everyone | `patches/reva/0002-…` |
 
 **Defaults in the image** (from 7.2.4-6; a compose file can override them): `FRONTEND_DISABLE_RADICALE=true` (no Calendar in the app menu: without a CalDAV server it leads nowhere) and `FRONTEND_CONFIGURABLE_NOTIFICATIONS=true` (the per-event notification table in Preferences).
 
