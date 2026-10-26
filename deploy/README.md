@@ -51,7 +51,7 @@ The desktop and mobile apps connect to `https://<your domain>` as usual. They op
 - **Roles:** `client` and `employee` are oc-custom's file-server types (no personal space; clients get folders shared as "Can't delete", staff as "Can edit"; see the [main README](../README.md#user-types-and-the-cant-delete-role)). `user`, `admin` and `light` are upstream's (User, Admin, User Light) with upstream's web UI. `add` without `--role` makes a `user`.
 - **Admins** (`--role admin`) are in Authelia's `admins` group, so they need 2FA. Changing the role with `users.sh role` changes both.
 - With Authelia, OpenCloud's own password for each user is random and unused; passwords are checked by Authelia only.
-- `users.sh` uses an app token for `admin`, created on first use and kept in `.admin-token` (private, valid one year; delete the file to get a new one, and remove the old token under the admin's Settings → App Tokens).
+- `users.sh` uses an app token for `admin` that it makes at each run, keeps in memory and lets expire after 10 minutes. Older versions kept one in `.admin-token` for a year; `users.sh` removes that file, and the old token should be deleted under the admin's Settings → App Tokens.
 - Impersonation (an admin's app token making tokens for other users) is off; `AUTH_APP_ENABLE_IMPERSONATION=true` in `.env` turns it on for management tools that need it. `users.sh` doesn't.
 - Users created in OpenCloud's web UI (Admin settings → Users) exist only in OpenCloud. With Authelia they can't sign in until they have an entry in Authelia's file: create them with `users.sh` instead.
 

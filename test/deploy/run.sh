@@ -101,6 +101,10 @@ wait_up() { # domain, with Authelia
     return 1
 }
 
+admin_token() { # a short-lived app token for admin, as users.sh makes it
+    docker compose exec -T opencloud opencloud auth-app create --user-name admin --expiration 10m | sed -n 's/^ *token: //p'
+}
+
 logon() { # domain, user, password: the built-in sign-in's answer (200 ok, 204 refused)
     curl_ -o /dev/null -w '%{http_code}' -H 'Kopano-Konnect-XSRF: 1' -H "Referer: https://$1/signin/v1/identifier" \
         -H "Origin: https://$1" -H 'Content-Type: application/json' "https://$1/signin/v1/identifier/_/logon" \
@@ -139,10 +143,10 @@ check "Authelia has no OIDC sign-out endpoint; the web signs out at its /logout 
     '! curl_ "https://$DOMAIN/.well-known/openid-configuration" | grep -q end_session_endpoint &&
      curl_ "https://$DOMAIN/config.json" | grep -Eq "\"logoutUrl\": ?\"https://$DOMAIN/authelia/logout\\?rd="'
 check "no Calendar (capability support-radicale off)" \
-    'curl_ -u "admin:$(cat .admin-token)" "https://$DOMAIN/ocs/v1.php/cloud/capabilities?format=json" | grep -Eq "\"support-radicale\": ?false"'
+    'curl_ -u "admin:$(admin_token)" "https://$DOMAIN/ocs/v1.php/cloud/capabilities?format=json" | grep -Eq "\"support-radicale\": ?false"'
 check "users.sh add alice (password on stdin)" 'echo Alice-pass1 | ./users.sh add alice --name "Alice Example" --email alice@deploy.test'
 check "impersonation is off: admin's token can't make one for alice" \
-    '[ "$(curl_ -u "admin:$(cat .admin-token)" -X POST -o /dev/null -w "%{http_code}" \
+    '[ "$(curl_ -u "admin:$(admin_token)" -X POST -o /dev/null -w "%{http_code}" \
         "https://$DOMAIN/auth-app/tokens?expiry=10m&userName=alice")" -ge 400 ]'
 check "users.sh add bob as User Light (--random)" './users.sh add bob --role light --email bob@deploy.test --random < /dev/null'
 check "users.sh disable bob" './users.sh disable bob'
@@ -173,11 +177,12 @@ check "users.sh delete bob (both sides)" \
 check "users.sh delete erin and fred" './users.sh delete erin < /dev/null && ./users.sh delete fred < /dev/null'
 # A user made in OpenCloud only (its web UI, or before Authelia): passwd adds them to Authelia
 check "a user created in OpenCloud only gets an Authelia entry from users.sh passwd" \
-    'curl_ -u "admin:$(cat .admin-token)" -H "Content-Type: application/json" -o /dev/null -w "%{http_code}" \
+    'curl_ -u "admin:$(admin_token)" -H "Content-Type: application/json" -o /dev/null -w "%{http_code}" \
         -d "{\"onPremisesSamAccountName\":\"dave\",\"displayName\":\"Dave\",\"mail\":\"dave@deploy.test\",\"passwordProfile\":{\"password\":\"x-unused-1\"}}" \
         "https://$DOMAIN/graph/v1.0/users" | grep -q 201 && echo Dave-pass1 | ./users.sh passwd dave &&
      curl_ -H "Content-Type: application/json" -d "{\"username\":\"dave\",\"password\":\"Dave-pass1\"}" \
         "https://$DOMAIN/authelia/api/firstfactor" | grep -q "\"status\":\"OK\""'
+check "users.sh leaves no app token on disk" '[ ! -e .admin-token ]'
 check "the user file is private (600)" '[ "$(stat -c %a authelia/users/users_database.yml)" = 600 ]'
 docker compose down > /dev/null 2>&1
 

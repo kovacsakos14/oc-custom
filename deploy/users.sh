@@ -10,7 +10,7 @@ ROLE_USER=d7beeea8-8ff4-406b-8fb6-ab2dd81e6b11
 ROLE_LIGHT=38071a68-456a-4553-846a-fa67bf5596cc # User Light: no personal space
 ROLE_CLIENT=38f0649f-b600-4188-b138-fbd2c773cc43   # oc-custom's Client: shared folders, language only
 ROLE_EMPLOYEE=12047bc6-9aa3-49f6-8d78-e64b3065cd99 # oc-custom's Employee: shared folders, e-mail settings
-TOKEN_FILE=.admin-token
+ADMIN_TOKEN=""
 
 usage() {
     cat <<'EOF'
@@ -36,17 +36,22 @@ EOF
 
 # --- OpenCloud's API, as admin with an app token, from inside its container
 
+# token: makes this run's app token for admin. It's kept in memory only and
+# expires after 10 minutes, so nothing usable is left behind. Called once
+# before the command, not from api(): api() runs in subshells.
 token() {
-    if [ ! -s "$TOKEN_FILE" ]; then
-        local out i
-        for i in 1 2 3 4 5; do
-            out="$(docker compose exec -T opencloud opencloud auth-app create --user-name admin --expiration 8760h 2>&1)" && break
-            sleep 5
-        done
-        (umask 077; printf '%s\n' "$out" | sed -n 's/^ *token: //p' > "$TOKEN_FILE")
-        [ -s "$TOKEN_FILE" ] || die "Couldn't create an app token for admin: $out"
+    local out i
+    if [ -e .admin-token ]; then
+        # users.sh before 7.2.4-7 kept a token here, valid for a year
+        rm -f .admin-token
+        echo "Removed .admin-token (an older users.sh's token). Its token stays valid until it expires: delete it under admin's Settings -> App Tokens." >&2
     fi
-    cat "$TOKEN_FILE"
+    for i in 1 2 3 4 5; do
+        out="$(docker compose exec -T opencloud opencloud auth-app create --user-name admin --expiration 10m 2>&1)" && break
+        sleep 5
+    done
+    ADMIN_TOKEN="$(printf '%s\n' "$out" | sed -n 's/^ *token: //p')"
+    [ -n "$ADMIN_TOKEN" ] || die "Couldn't create an app token for admin: $out"
 }
 
 # cfg_quote: a value for curl's config file (in double quotes)
@@ -55,19 +60,15 @@ cfg_quote() { printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'; }
 # api METHOD PATH [JSON]: the response body on stdout; fails on HTTP >= 300.
 # The token and the body go through curl's config on stdin, not its command line.
 api() {
-    local method="$1" path="$2" body="${3-}" out code retry
-    for retry in 1 2; do
-        out="$({
-            printf 'user = "admin:%s"\n' "$(cfg_quote "$(token)")"
-            [ -z "$body" ] || printf 'data-raw = "%s"\n' "$(cfg_quote "$body")"
-        } | docker compose exec -T opencloud curl -sS -K - -X "$method" -H 'Content-Type: application/json' \
-            -w '\n%{http_code}' "http://127.0.0.1:9200$path")"
-        code="${out##*$'\n'}"
-        out="${out%$'\n'*}"
-        # A stale token (revoked, expired, or a new server): make a new one once
-        if [ "$code" = 401 ] && [ "$retry" = 1 ]; then rm -f "$TOKEN_FILE"; continue; fi
-        break
-    done
+    local method="$1" path="$2" body="${3-}" out code
+    [ -n "$ADMIN_TOKEN" ] || die "No app token (call token first)"
+    out="$({
+        printf 'user = "admin:%s"\n' "$(cfg_quote "$ADMIN_TOKEN")"
+        [ -z "$body" ] || printf 'data-raw = "%s"\n' "$(cfg_quote "$body")"
+    } | docker compose exec -T opencloud curl -sS -K - -X "$method" -H 'Content-Type: application/json' \
+        -w '\n%{http_code}' "http://127.0.0.1:9200$path")"
+    code="${out##*$'\n'}"
+    out="${out%$'\n'*}"
     [ "$code" -lt 300 ] 2>/dev/null || die "OpenCloud: $method $path: HTTP $code $out"
     printf '%s' "$out"
 }
@@ -312,6 +313,9 @@ cmd_reset_2fa() {
 }
 
 cmd="${1-help}"; shift || true
+case "$cmd" in
+    list|add|passwd|role|email|disable|enable|delete) token ;;
+esac
 case "$cmd" in
     list) cmd_list ;;
     add) cmd_add "$@" ;;
