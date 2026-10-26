@@ -136,6 +136,11 @@ check "docker compose up -d" "docker compose up -d"
 check "OpenCloud and Authelia answer through SWAG" 'wait_up "$DOMAIN" yes'
 check "OpenCloud's sign-in configuration is Authelia's" \
     'curl_ "https://$DOMAIN/.well-known/openid-configuration" | grep -q "\"issuer\":\"https://$DOMAIN/authelia\""'
+check "Authelia logs the client's address, not one the client sent (X-Forwarded-For)" \
+    'curl_ -H "X-Forwarded-For: 6.6.6.6" -H "Content-Type: application/json" -d "{\"username\":\"xff-probe\",\"password\":\"x\"}" \
+        "https://$DOMAIN/authelia/api/firstfactor" > /dev/null; sleep 1
+     lines="$(docker compose logs authelia | grep xff-probe)"
+     grep -q remote_ip <<< "$lines" && ! grep -q 6.6.6.6 <<< "$lines"'
 check "OpenCloud runs notifications (SMTP set) and not its own sign-in (idp)" \
     'services="$(docker compose exec -T opencloud opencloud list)"; grep -q " notifications " <<< "$services" && ! grep -q " idp " <<< "$services"'
 check "users.sh email admin" './users.sh email admin admin@deploy.test'
