@@ -8,6 +8,8 @@ cd "$(dirname "$0")"
 ROLE_ADMIN=71881883-1768-46bd-a24d-a356a2afdf7f
 ROLE_USER=d7beeea8-8ff4-406b-8fb6-ab2dd81e6b11
 ROLE_LIGHT=38071a68-456a-4553-846a-fa67bf5596cc # User Light: no personal space
+ROLE_CLIENT=38f0649f-b600-4188-b138-fbd2c773cc43   # oc-custom's Client: shared folders, language only
+ROLE_EMPLOYEE=12047bc6-9aa3-49f6-8d78-e64b3065cd99 # oc-custom's Employee: shared folders, e-mail settings
 TOKEN_FILE=.admin-token
 
 usage() {
@@ -15,11 +17,13 @@ usage() {
 Usage: ./users.sh COMMAND [USER] [OPTIONS]
 
   list                          OpenCloud's users, their role and sign-in state
-  add USER [--name NAME] [--email ADDRESS] [--role user|admin|light] [--random]
+  add USER [--name NAME] [--email ADDRESS] [--random]
+                                [--role user|admin|light|client|employee]
                                 Creates the user; asks for the password
                                 (--random: makes one up and shows it)
   passwd USER [--random]        Sets a new password
-  role USER user|admin|light    Changes the role (admin: 2FA with Authelia)
+  role USER ROLE                Changes the role: user, admin (2FA with Authelia),
+                                light, client or employee
   email USER ADDRESS            Changes the e-mail address
   disable USER, enable USER     Blocks or allows signing in
   delete USER                   Deletes the user (their files too)
@@ -86,7 +90,9 @@ role_id() {
         admin) echo "$ROLE_ADMIN" ;;
         user) echo "$ROLE_USER" ;;
         light) echo "$ROLE_LIGHT" ;;
-        *) die "Role: user, admin or light" ;;
+        client) echo "$ROLE_CLIENT" ;;
+        employee) echo "$ROLE_EMPLOYEE" ;;
+        *) die "Role: user, admin, light, client or employee" ;;
     esac
 }
 
@@ -145,17 +151,17 @@ cmd_list() {
     else
         au=""
     fi
-    printf '%s\n' "$oc" | awk -F'\t' -v au="$au" -v a="$ROLE_ADMIN" -v u="$ROLE_USER" -v l="$ROLE_LIGHT" -v with="$(with_authelia && echo 1)" '
+    printf '%s\n' "$oc" | awk -F'\t' -v au="$au" -v a="$ROLE_ADMIN" -v u="$ROLE_USER" -v l="$ROLE_LIGHT" -v c="$ROLE_CLIENT" -v e="$ROLE_EMPLOYEE" -v with="$(with_authelia && echo 1)" '
         BEGIN {
             n = split(au, rows, "\n")
             for (i = 1; i <= n; i++) { split(rows[i], f, "\t"); if (f[1] != "") { off[f[1]] = f[2]; groups[f[1]] = f[3] } }
-            role[a] = "admin"; role[u] = "user"; role[l] = "light"
-            printf "%-20s %-24s %-28s %-6s %-8s %s\n", "USER", "NAME", "E-MAIL", "ROLE", "ENABLED", (with ? "AUTHELIA" : "")
+            role[a] = "admin"; role[u] = "user"; role[l] = "light"; role[c] = "client"; role[e] = "employee"
+            printf "%-20s %-24s %-28s %-8s %-8s %s\n", "USER", "NAME", "E-MAIL", "ROLE", "ENABLED", (with ? "AUTHELIA" : "")
         }
         $1 != "" {
             s = ""
             if (with) s = !($1 in off) ? "missing" : (off[$1] == "true" ? "disabled" : "ok") (groups[$1] != "-" && $1 in off ? " (" groups[$1] ")" : "")
-            printf "%-20s %-24s %-28s %-6s %-8s %s\n", $1, $2, $3, ($5 in role ? role[$5] : "-"), ($4 == "true" ? "yes" : "no"), s
+            printf "%-20s %-24s %-28s %-8s %-8s %s\n", $1, $2, $3, ($5 in role ? role[$5] : "-"), ($4 == "true" ? "yes" : "no"), s
         }'
 }
 
@@ -233,7 +239,7 @@ cmd_passwd() {
 
 cmd_role() {
     local user="${1-}" role="${2-}" rid
-    [ -n "$user" ] && [ -n "$role" ] || die "role USER user|admin|light"
+    [ -n "$user" ] && [ -n "$role" ] || die "role USER user|admin|light|client|employee"
     valid_name "$user"
     rid="$(role_id "$role")"
     set_role "$user" "$rid"
