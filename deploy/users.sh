@@ -81,7 +81,8 @@ api() {
         [ -z "$body" ] || printf 'data-raw = "%s"\n' "$(cfg_quote "$body")"
         [ -z "$header" ] || printf 'header = "%s"\n' "$(cfg_quote "$header")"
     } | docker compose exec -T opencloud curl -sS -K - -X "$method" -H 'Content-Type: application/json' \
-        -w '\n%{http_code}')"
+        -w '\n%{http_code}')" ||
+        die "OpenCloud: $method ${path%%\?*}: no answer (is the opencloud container running? docker compose ps)"
     code="${out##*$'\n'}"
     out="${out%$'\n'*}"
     [ "$code" -lt 300 ] 2>/dev/null || die "OpenCloud: $method $path: HTTP $code $out"
@@ -94,7 +95,7 @@ json() { yq -p json -o json -I0 "$@"; } # JSON in, compact JSON out
 # inside another command's arguments a failure wouldn't stop the script.
 user_id() {
     local id
-    id="$(api GET "/graph/v1.0/users/$1" | yq -p json '.id // ""')"
+    id="$(api GET "/graph/v1.0/users/$1" | yq -p json '.id // ""')" || exit 1 # api said why
     [ -n "$id" ] || die "OpenCloud: no id for $1"
     printf '%s' "$id"
 }
