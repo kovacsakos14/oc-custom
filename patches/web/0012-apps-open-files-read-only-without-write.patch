@@ -1,0 +1,65 @@
+diff --git a/packages/web-pkg/src/components/AppTemplates/AppWrapper.vue b/packages/web-pkg/src/components/AppTemplates/AppWrapper.vue
+index cb429e8..8111f36 100644
+--- a/packages/web-pkg/src/components/AppTemplates/AppWrapper.vue
++++ b/packages/web-pkg/src/components/AppTemplates/AppWrapper.vue
+@@ -84,7 +84,7 @@ import {
+   isProjectSpaceResource,
+   isShareSpaceResource
+ } from '@opencloud-eu/web-client'
+-import { DavPermission } from '@opencloud-eu/web-client/webdav'
++import { isFileEditable } from './editable'
+ import { HttpError } from '@opencloud-eu/web-client'
+ import { dirname } from 'path'
+ import { useFileActionsOpenWithApp } from '../../composables'
+@@ -359,9 +359,8 @@ const loadFileTask = useTask(function* (signal) {
+       return
+     }
+ 
+-    isReadOnly.value = ![DavPermission.Updateable, DavPermission.FileUpdateable].some(
+-      (p) => (unref(resource).permissions || '').indexOf(p) > -1
+-    )
++    // oc-custom: only write (W) makes a file editable, not rename/move (NV) alone
++    isReadOnly.value = !isFileEditable(unref(resource).permissions)
+ 
+     if (unref(hasProp('currentContent'))) {
+       const fileContentsResponse = yield* call(
+diff --git a/packages/web-pkg/src/components/AppTemplates/editable.ts b/packages/web-pkg/src/components/AppTemplates/editable.ts
+new file mode 100644
+index 0000000..964368a
+--- /dev/null
++++ b/packages/web-pkg/src/components/AppTemplates/editable.ts
+@@ -0,0 +1,10 @@
++import { DavPermission } from '@opencloud-eu/web-client/webdav'
++
++/**
++ * oc-custom: whether an app may open a file for editing. Only the write permission
++ * (W) counts: rename/move (NV) alone, as on oc-custom's "Can't delete" shares, opens
++ * read-only (upstream accepted either, and the server would take the overwrite).
++ */
++export function isFileEditable(permissions: string | undefined): boolean {
++  return (permissions || '').includes(DavPermission.FileUpdateable)
++}
+diff --git a/packages/web-pkg/tests/unit/components/AppTemplates/editable.spec.ts b/packages/web-pkg/tests/unit/components/AppTemplates/editable.spec.ts
+new file mode 100644
+index 0000000..0532c87
+--- /dev/null
++++ b/packages/web-pkg/tests/unit/components/AppTemplates/editable.spec.ts
+@@ -0,0 +1,18 @@
++import { isFileEditable } from '../../../../src/components/AppTemplates/editable'
++
++// oc-custom: apps open a file for editing only with the write permission
++
++describe('isFileEditable', () => {
++  it.each([
++    ['RDNVW', true], // own file
++    ['SDNVW', true], // "Can edit" share
++    ['W', true],
++    ['SNV', false], // "Can't delete" share: rename/move only
++    ['NV', false],
++    ['S', false], // "Can view" share
++    ['', false],
++    [undefined, false]
++  ])('%s: %s', (permissions, editable) => {
++    expect(isFileEditable(permissions)).toBe(editable)
++  })
++})
