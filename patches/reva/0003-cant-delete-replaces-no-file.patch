@@ -1,0 +1,123 @@
+diff --git a/pkg/storage/utils/decomposedfs/upload.go b/pkg/storage/utils/decomposedfs/upload.go
+index fcb23f8..bef4c58 100644
+--- a/pkg/storage/utils/decomposedfs/upload.go
++++ b/pkg/storage/utils/decomposedfs/upload.go
+@@ -284,6 +284,11 @@ func (fs *Decomposedfs) InitiateUpload(ctx context.Context, ref *provider.Refere
+ 		return nil, errtypes.PermissionDenied(path)
+ 	}
+ 
++	// oc-custom: "Can't delete" may add files, not replace one (upload_custom.go)
++	if n.Exists && !mayReplace(rp, n.Blobsize) {
++		return nil, errtypes.PermissionDenied(path)
++	}
++
+ 	// are we trying to overwriting a folder with a file?
+ 	if n.Exists && n.IsDir(ctx) {
+ 		return nil, errtypes.PreconditionFailed("resource is not a file")
+diff --git a/pkg/storage/utils/decomposedfs/upload_custom.go b/pkg/storage/utils/decomposedfs/upload_custom.go
+new file mode 100644
+index 0000000..cfcc45a
+--- /dev/null
++++ b/pkg/storage/utils/decomposedfs/upload_custom.go
+@@ -0,0 +1,26 @@
++package decomposedfs
++
++// oc-custom: oc-custom's "Can't delete" share role may upload new files but not
++// replace one that has content, so nothing on such a share can be lost: an upload
++// over an existing file (PUT, TUS, COPY onto it) is refused. An empty file may be
++// replaced, since nothing is lost that way: Windows Explorer and macOS Finder
++// create a file empty first and then upload its content over it. Upstream's roles
++// keep their behaviour.
++
++import (
++	provider "github.com/cs3org/go-cs3apis/cs3/storage/provider/v1beta1"
++)
++
++// isCantDelete tells oc-custom's "Can't delete" role (upstream's "Can upload" plus
++// GetQuota) by its permissions: upload and move, no delete, no write (reva writes
++// W for InitiateFileUpload with RestoreRecycleItem). The same set gets NV in
++// conversions.Role.WebDAVPermissions.
++func isCantDelete(rp *provider.ResourcePermissions) bool {
++	return rp.GetInitiateFileUpload() && rp.GetMove() && rp.GetGetQuota() &&
++		!rp.GetDelete() && !rp.GetRestoreRecycleItem()
++}
++
++// mayReplace tells whether an upload may replace an existing file of the given size
++func mayReplace(rp *provider.ResourcePermissions, size int64) bool {
++	return size == 0 || !isCantDelete(rp)
++}
+diff --git a/pkg/storage/utils/decomposedfs/upload_custom_test.go b/pkg/storage/utils/decomposedfs/upload_custom_test.go
+new file mode 100644
+index 0000000..40e57b8
+--- /dev/null
++++ b/pkg/storage/utils/decomposedfs/upload_custom_test.go
+@@ -0,0 +1,69 @@
++package decomposedfs_test
++
++// oc-custom: tests for the oc-custom change in InitiateUpload (upload_custom.go),
++// in their own file so the patch doesn't conflict with upstream changes to
++// upload_test.go.
++
++import (
++	provider "github.com/cs3org/go-cs3apis/cs3/storage/provider/v1beta1"
++	. "github.com/onsi/ginkgo/v2"
++	. "github.com/onsi/gomega"
++	"github.com/opencloud-eu/reva/v2/pkg/conversions"
++	"github.com/opencloud-eu/reva/v2/pkg/errtypes"
++	helpers "github.com/opencloud-eu/reva/v2/pkg/storage/utils/decomposedfs/testhelpers"
++	"github.com/stretchr/testify/mock"
++)
++
++var _ = Describe("Uploads on oc-custom's Can't delete role", func() {
++	var env *helpers.TestEnv
++
++	cantDelete := func() *provider.ResourcePermissions {
++		p := conversions.NewEditorLiteRole().CS3ResourcePermissions()
++		p.GetQuota = true
++		return p
++	}
++	canUpload := func() *provider.ResourcePermissions { return conversions.NewEditorLiteRole().CS3ResourcePermissions() }
++	canEdit := func() *provider.ResourcePermissions { return conversions.NewEditorRole().CS3ResourcePermissions() }
++
++	ref := func(name string) *provider.Reference {
++		return &provider.Reference{ResourceId: env.SpaceRootRes, Path: "./dir1/" + name}
++	}
++	// upload starts an upload of 10 bytes to name with the given permissions
++	upload := func(perms *provider.ResourcePermissions, name string) error {
++		env.Permissions.On("AssemblePermissions", mock.Anything, mock.Anything).Return(perms, nil)
++		_, err := env.Fs.InitiateUpload(env.Ctx, ref(name), 10, map[string]string{})
++		return err
++	}
++
++	BeforeEach(func() {
++		var err error
++		env, err = helpers.NewTestEnv(nil)
++		Expect(err).ToNot(HaveOccurred())
++		dir1, err := env.Lookup.NodeFromResource(env.Ctx, &provider.Reference{ResourceId: env.SpaceRootRes, Path: "./dir1"})
++		Expect(err).ToNot(HaveOccurred())
++		_, err = env.CreateTestFile("full.txt", "full-blobid", dir1.ID, dir1.SpaceID, 10)
++		Expect(err).ToNot(HaveOccurred())
++		_, err = env.CreateTestFile("empty.txt", "", dir1.ID, dir1.SpaceID, 0)
++		Expect(err).ToNot(HaveOccurred())
++	})
++
++	AfterEach(func() {
++		if env != nil {
++			env.Cleanup()
++		}
++	})
++
++	It("refuses replacing a file that has content", func() {
++		Expect(upload(cantDelete(), "full.txt")).To(BeAssignableToTypeOf(errtypes.PermissionDenied("")))
++	})
++	It("accepts a new file", func() {
++		Expect(upload(cantDelete(), "new.txt")).To(Succeed())
++	})
++	It("accepts replacing an empty file (Windows Explorer and macOS Finder create files empty first)", func() {
++		Expect(upload(cantDelete(), "empty.txt")).To(Succeed())
++	})
++	It("leaves upstream's Can upload and Can edit as they are", func() {
++		Expect(upload(canUpload(), "full.txt")).To(Succeed())
++		Expect(upload(canEdit(), "full.txt")).To(Succeed())
++	})
++})
