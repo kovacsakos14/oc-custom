@@ -33,10 +33,18 @@ fi
 chmod 600 .env
 
 # The user running this owns everything; OpenCloud and Authelia run as it
-if [ -z "$(conf PUID)" ] || [ -z "$(conf PGID)" ]; then
-    sed -i "s/^PUID=.*/PUID=$(id -u)/; s/^PGID=.*/PGID=$(id -g)/" .env
-    echo "PUID=$(id -u), PGID=$(id -g) written to .env"
-fi
+for k in PUID PGID; do
+    [ -z "$(conf "$k")" ] || continue
+    v="$([ "$k" = PUID ] && id -u || id -g)"
+    # the line from .env.example, or a new one when it isn't there
+    if grep -q "^$k=" .env; then
+        sed -i "s/^$k=.*/$k=$v/" .env
+    else
+        [ -z "$(tail -c 1 .env)" ] || echo >> .env # .env may not end in a newline
+        echo "$k=$v" >> .env
+    fi
+    echo "$k=$v written to .env"
+done
 
 # Docker would create the branding mount point inside data/ as root
 mkdir -p config data/web/assets/themes/_branding branding swag
