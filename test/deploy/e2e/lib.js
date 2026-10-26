@@ -25,8 +25,10 @@ exports.signIn = async (p, user, pass) => {
   await p.click('#sign-in-button');
 };
 
-// Waits until OpenCloud's files view shows the given text
-exports.inFiles = (p, needle) => p.waitForFunction(
+// Waits until OpenCloud's files view shows the given text (by default its app bar,
+// files-app-bar: user types land on different pages, and the menu is collapsed in
+// small windows)
+exports.inFiles = (p, needle = 'files-app-bar') => p.waitForFunction(
   (o, n) => location.href.startsWith(o + '/files') && document.documentElement.innerHTML.includes(n),
   { timeout: 40000 }, O, needle);
 

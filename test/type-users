@@ -1,0 +1,62 @@
+#!/usr/bin/env bash
+# Sets up oc-custom's user types in the test OpenCloud (OC_URL and OC_ADMIN_TOKEN in
+# test/local.env): users typeclient (Client) and typeemployee (Employee), and admin's
+# folder zz-types with note.txt, shared to typeclient as "Can't delete" and to
+# typeemployee as "Can edit". Prints the users as name:password for test/browser.
+#   test/type-users            # set up (removes an earlier setup first)
+#   test/type-users --remove   # remove the users and the folder (also from the trash)
+set -euo pipefail
+
+# shellcheck source=lib.sh
+source "$(cd "$(dirname "$0")" && pwd)/lib.sh"
+need OC_ADMIN_TOKEN
+O="$OC_URL"
+A="admin:$OC_ADMIN_TOKEN"
+CLIENT=38f0649f-b600-4188-b138-fbd2c773cc43
+EMPLOYEE=12047bc6-9aa3-49f6-8d78-e64b3065cd99
+CANT_DELETE=a61a37ad-42f2-46f6-a047-fe1906b525e2
+CAN_EDIT=fb6c3e19-e378-47e5-b277-9732f9de6e21
+FOLDER=zz-types
+
+api() { curl -fsk -u "$A" "$@"; }
+drive=$(api "$O/graph/v1.0/me/drives?\$filter=driveType%20eq%20personal" | jq -r '.value[0].id')
+
+remove() {
+    for u in typeclient typeemployee; do
+        id=$(curl -sk -u "$A" "$O/graph/v1.0/users/$u" | jq -r '.id // empty')
+        [ -z "$id" ] || api -X DELETE "$O/graph/v1.0/users/$id" -o /dev/null
+    done
+    curl -sk -u "$A" -X DELETE "$O/dav/spaces/$drive/$FOLDER" -o /dev/null
+    # and from admin's trash bin
+    for key in $(curl -sk -u "$A" -X PROPFIND -H 'Depth: 1' "$O/remote.php/dav/spaces/trash-bin/$drive" | python3 -c '
+import sys, xml.etree.ElementTree as ET
+ns = {"d": "DAV:", "oc": "http://owncloud.org/ns"}
+for r in ET.parse(sys.stdin).getroot().findall("d:response", ns):
+    loc = r.find(".//oc:trashbin-original-location", ns)
+    if loc is not None and loc.text == sys.argv[1]:
+        print(r.find("d:href", ns).text.rstrip("/").rsplit("/", 1)[1])
+' "$FOLDER"); do
+        api -X DELETE "$O/remote.php/dav/spaces/trash-bin/$drive/$key" -o /dev/null
+    done
+}
+
+remove
+[ "${1:-}" = "--remove" ] && { echo "Removed typeclient, typeemployee and $FOLDER" >&2; exit 0; }
+
+app=$(api "$O/graph/v1.0/applications" | jq -r '.value[0].id')
+api -X MKCOL "$O/dav/spaces/$drive/$FOLDER" -o /dev/null
+api -X PUT --data-binary "oc-custom user types" "$O/dav/spaces/$drive/$FOLDER/note.txt" -o /dev/null
+item=$(api -X PROPFIND -H 'Depth: 0' "$O/dav/spaces/$drive/$FOLDER" \
+    -d '<d:propfind xmlns:d="DAV:" xmlns:oc="http://owncloud.org/ns"><d:prop><oc:fileid/></d:prop></d:propfind>' |
+    sed -n 's|.*<oc:fileid>\([^<]*\)</oc:fileid>.*|\1|p')
+for spec in "typeclient $CLIENT $CANT_DELETE" "typeemployee $EMPLOYEE $CAN_EDIT"; do
+    read -r name type role <<<"$spec"
+    password=$(openssl rand -hex 12)
+    id=$(api -X POST "$O/graph/v1.0/users" -H 'Content-Type: application/json' \
+        -d "{\"onPremisesSamAccountName\":\"$name\",\"displayName\":\"$name\",\"mail\":\"$name@example.test\",\"passwordProfile\":{\"password\":\"$password\"}}" | jq -r .id)
+    api -X POST "$O/graph/v1.0/users/$id/appRoleAssignments" -H 'Content-Type: application/json' \
+        -d "{\"principalId\":\"$id\",\"resourceId\":\"$app\",\"appRoleId\":\"$type\"}" -o /dev/null
+    api -X POST "$O/graph/v1beta1/drives/$drive/items/$item/invite" -H 'Content-Type: application/json' \
+        -d "{\"recipients\":[{\"objectId\":\"$id\",\"@libre.graph.recipient.type\":\"user\"}],\"roles\":[\"$role\"]}" -o /dev/null
+    echo "$name:$password"
+done

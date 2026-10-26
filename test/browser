@@ -6,6 +6,8 @@
 #   ACTIONS="client1:Client folder/readme.txt" test/browser …   # also list the file's actions
 #   NEW=1 test/browser …                                         # also list the "New" menu
 #   SEARCH="admin:client1" test/browser …                        # also search the share dialog
+#   OPEN="client1:Client folder/readme.txt" test/browser …       # also open it: editable or not
+#   PREFS=1 test/browser …                                       # also list Preferences' notifications
 set -euo pipefail
 
 here="$(cd "$(dirname "$0")" && pwd)"
@@ -14,5 +16,5 @@ source "$here/lib.sh"
 out="$(mkdir -p "$1" && cd "$1" && pwd)"
 shift
 docker run --rm --network host -u "$(id -u):$(id -g)" -v "$here:/usr/src/app/t:ro" -v "$out:/out" \
-    -e BASE="${BASE:-$OC_URL}" -e USERS="$*" -e ACTIONS="${ACTIONS:-}" -e NEW="${NEW:-}" -e SEARCH="${SEARCH:-}" \
+    -e BASE="${BASE:-$OC_URL}" -e USERS="$*" -e ACTIONS="${ACTIONS:-}" -e NEW="${NEW:-}" -e SEARCH="${SEARCH:-}" -e OPEN="${OPEN:-}" -e PREFS="${PREFS:-}" \
     zenika/alpine-chrome:with-puppeteer node /usr/src/app/t/browser.js

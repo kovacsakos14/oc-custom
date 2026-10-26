@@ -38,22 +38,23 @@ The desktop and mobile apps connect to `https://<your domain>` as usual. They op
 ## Users
 ```
 ./users.sh list
-./users.sh add anna --name "Anna Kovács" --email anna@example.com            # asks for the password
-./users.sh add client1 --name "Client One" --email c1@example.com --role light --random
+./users.sh add anna --name "Anna Kovács" --email anna@example.com --role employee   # asks for the password
+./users.sh add client1 --name "Client One" --email c1@example.com --role client --random
 ./users.sh passwd anna                     # a new password (asks, or --random)
-./users.sh role anna admin                 # user | admin | light (User Light: no personal space)
+./users.sh role anna admin                 # user | admin | light | client | employee
 ./users.sh email anna anna@example.org
 ./users.sh disable anna / enable anna
 ./users.sh delete anna                     # deletes her files too; asks to confirm
 ./users.sh reset-2fa anna                  # lost phone: removes her 2FA devices
 ```
 - A password can come from stdin instead of the prompt: `echo 'secret' | ./users.sh passwd anna`. `--random` makes one up and shows it once.
+- **Roles:** `client` and `employee` are oc-custom's file-server types (no personal space; clients get folders shared as "Can't delete", staff as "Can edit"; see the [main README](../README.md#user-types-and-the-cant-delete-role)). `user`, `admin` and `light` are upstream's (User, Admin, User Light) with upstream's web UI. `add` without `--role` makes a `user`.
 - **Admins** (`--role admin`) are in Authelia's `admins` group, so they need 2FA. Changing the role with `users.sh role` changes both.
 - With Authelia, OpenCloud's own password for each user is random and unused; passwords are checked by Authelia only.
 - `users.sh` uses an app token for `admin`, created on first use and kept in `.admin-token` (private, valid one year; delete the file to get a new one, and remove the old token under the admin's Settings → App Tokens).
 - Users created in OpenCloud's web UI (Admin settings → Users) exist only in OpenCloud. With Authelia they can't sign in until they have an entry in Authelia's file: create them with `users.sh` instead.
 
-**What users see:** after signing in, "Shared with me" (Shares is the first entry of the left menu; staff also have Personal). There's no Spaces entry, no Calendar and no Text Editor in the app menu; text and Markdown files still open in the editor.
+**What users see:** Clients and Employees land on "Shared with me"; their menu is Shares and Deleted files, with no Spaces entry. Admins and upstream's types see upstream's web (they land on Personal). Nobody has Calendar in the app menu (the image's default).
 
 **What users do themselves (with Authelia):** in OpenCloud, their initials (top right) → Preferences → "Change password" opens Authelia's settings in a new tab. There they change their password, and in the menu (☰) → Two-Factor Authentication they add or remove their authenticator app. Authelia first e-mails them a one-time code to confirm it's them.
 

@@ -4,9 +4,10 @@
 
 Based on OpenCloud **7.2.4** (reva v2.46.8, web v7.1.5); see `versions.env`. Image: `ghcr.io/kovacsakos14/oc-custom:7.2.4-<build>`.
 
-The aim is a plain file server: shared folders first, nothing on screen that isn't used.
+The aim is a plain file server: shared folders first, nothing on screen that isn't used. From 7.2.4-6 the file-server changes apply to **two user types of our own, Client and Employee**, and to **a share role of our own, "Can't delete"**. Upstream's types (Admin, Space Admin, User, User Light) and share roles behave as upstream ships them.
 
 ## Contents
+- [User types and the "Can't delete" role](#user-types-and-the-cant-delete-role)
 - [What's changed](#whats-changed)
 - [Deploying](#deploying)
 - [Branding](#branding)
@@ -17,25 +18,51 @@ The aim is a plain file server: shared folders first, nothing on screen that isn
 - [Status](#status)
 - [Licence](#licence)
 
-## What's changed
-| # | Change | Patch |
+## User types and the "Can't delete" role
+Built into the image (from 7.2.4-6): no settings file and no environment variable, and a server's compose file stays as for the official image.
+
+| | Client | Employee |
 |---|---|---|
-| 1 | **"Can upload" shares can rename and move items.** The server already accepts the move, but didn't report it to the apps (`oc:permissions` had no `NV`), so the web UI and the desktop app didn't offer it. Delete and editing stay off (no `D`, no `W`). Public links are unchanged. | `patches/reva/0001-…` |
-| 2 | **The web UI's Move action needs only rename permission,** no longer delete permission too, so "Can upload" users get it. Drag and drop and cut/paste had no such check. Moving to another space is a copy, as before. | `patches/web/0001-…` |
-| 3 | **The table is the default file view** instead of tiles. Users who already picked a view keep it (it's stored in their browser). | `patches/web/0002-…` |
-| 4 | **Accounts without a personal space (User Light) land on "Shared with me"** instead of the empty Spaces list. Others are unchanged. | `patches/web/0003-…` |
-| 5 | **The sign-in page follows the branding:** its tab title, tab icon, colours, footer and, from 7.2.4-2, a background image (see [Branding](#branding)). Without branding it looks exactly as upstream's. | `patches/server/0001-…` |
-| 6 | **"Change password" can open an external password page** (from 7.2.4-4; for the optional [Authelia](deploy/README.md) setup). When `WEB_OPTION_ACCOUNT_EDIT_LINK_HREF` is set, Settings → Preferences → "Change password" opens that URL in a new tab instead of OpenCloud's dialog, and the row shows even if OpenCloud's own password change is turned off. The "Edit" button upstream shows for that setting on Settings → Profile is removed, and (from 7.2.4-5) so is the "Show devices" row `WEB_OPTION_LOGOUT_URL` would add there (see 12). Without the settings nothing changes. | `patches/web/0004-…` |
-| 7 | **The share dialog finds people by username** too (from 7.2.4-5), not only by display name and e-mail. The server already matched usernames; the web dropped those results. | `patches/web/0005-…` |
-| 8 | **Shares comes first** (from 7.2.4-5): it's the top entry of the left menu and every account lands on "Shared with me" after signing in. Personal is the next entry. **The Spaces entry is hidden** for everyone; admins still manage spaces under Admin settings → Spaces. | `patches/web/0006-…` |
-| 9 | **Shares can't be hidden** (from 7.2.4-5): no Hide action, no eye button in "Shared with me", no Shares / Hidden Shares switch. Shares hidden before show in the list again. | `patches/web/0007-…` |
-| 10 | **"Copy permanent link" only for accounts that can share** (from 7.2.4-5), so not for User Light. The link only ever worked for people who already had access. | `patches/web/0008-…` |
-| 11 | **The Text Editor isn't in the app menu or the "New" menu** (from 7.2.4-5). Text and Markdown files still open and save in it. | `patches/web/0009-…` |
-| 12 | **"Log out" also signs out of an identity provider without a sign-out endpoint** (from 7.2.4-5; Authelia has none): with `WEB_OPTION_LOGOUT_URL` set, "Log out" goes there after OpenCloud's own sign-out, so the next sign-in asks for the password again and another user can sign in. [`deploy/`](deploy/README.md) sets it to Authelia's `/logout`. With OpenCloud's own sign-in nothing changes. | `patches/web/0010-…` |
+| Personal space, Favorites, public links | no | no |
+| Shares their own folders | no | no |
+| Folders shared to them as | "Can't delete" | upstream's "Can edit" |
+| Preferences they may change | language | language, e-mail notifications (per event, interval) |
+| Web | every change in the [table](#whats-changed) marked Client | the same, but text files can be created |
 
-**Recommended setting:** `FRONTEND_DISABLE_RADICALE: "true"` removes Calendar from the app menu (OpenCloud shows it by default, but without a CalDAV server set up it leads nowhere). `deploy/` sets it.
+- **Assigning:** Admin settings → Users → Role (OpenCloud calls the types "roles"), `deploy/users.sh add|role … client|employee`, or Graph (`POST /graph/v1.0/users/{id}/appRoleAssignments` with the ids below). Admins stay upstream's Admin and see upstream's web UI, apart from the changes marked "everyone".
+- **"Can't delete"** is offered in the share dialog for folders, between "Can upload" and "Can edit": view, download, upload, new folders, rename and move; no editing and no deleting. Its files open read-only in the apps (the Text Editor has no Save), and the desktop app marks them read-only and turns a local edit into a conflict copy. An overwrite by upload is still accepted by the server (it keeps the old content as a version).
+- **Upstream's "Can upload"** is upstream's again: the server allows rename and move, but the apps don't offer it.
+- **Resharing** isn't possible in OpenCloud 7.2 (the server refuses folder shares that carry the right to share), so Employees, like Clients, share nothing. Admins share client folders from their personal space.
+- **The server doesn't enforce Preferences' permissions** (upstream: settings values are saved without a permission check), so they hide settings in the web; someone calling the API by hand could still change their own auto-accept or e-mail settings.
+- **Once used, the types stay in OpenCloud's settings store,** also on an older or upstream image; their users then keep their type but get upstream's behaviour for it.
 
-Resharing needs no change: no share role lets a recipient share an item again, and User Light accounts can't create shares or public links at all (the server refuses both).
+| Id | Name |
+|---|---|
+| `38f0649f-b600-4188-b138-fbd2c773cc43` | user type Client |
+| `12047bc6-9aa3-49f6-8d78-e64b3065cd99` | user type Employee |
+| `a61a37ad-42f2-46f6-a047-fe1906b525e2` | share role "Can't delete" (icon `folder-shield-2` in the built-in theme) |
+
+## What's changed
+| # | Change | For | Patch |
+|---|---|---|---|
+| 1 | **"Can't delete" shares report rename and move** (`NV` in `oc:permissions`) to the apps. Until 7.2.4-5 this was "Can upload"; from 7.2.4-6 "Can upload" reports upstream's letters again. No `D`, no `W`. | the share role | `patches/reva/0001-…` |
+| 2 | **The web UI's Move action needs only rename permission,** no longer delete permission too. Drag and drop and cut/paste had no such check. Moving to another space is a copy, as before. | everyone (follows the share) | `patches/web/0001-…` |
+| 3 | **The table is the default file view** instead of tiles. Users who already picked a view keep it (it's stored in their browser). | everyone | `patches/web/0002-…` |
+| 4 | **A link to a drive that doesn't resolve leads to "Shared with me"** instead of the Spaces list (old `/files/spaces/personal` links, accounts without a personal space). | Client, Employee | `patches/web/0003-…` |
+| 5 | **The sign-in page follows the branding:** its tab title, tab icon, colours, footer and, from 7.2.4-2, a background image (see [Branding](#branding)). Without branding it looks exactly as upstream's. | everyone | `patches/server/0001-…` |
+| 6 | **"Change password" can open an external password page** (from 7.2.4-4; for the optional [Authelia](deploy/README.md) setup). When `WEB_OPTION_ACCOUNT_EDIT_LINK_HREF` is set, Settings → Preferences → "Change password" opens that URL in a new tab instead of OpenCloud's dialog, and the row shows even if OpenCloud's own password change is turned off. The "Edit" button upstream shows for that setting on Settings → Profile is removed, and (from 7.2.4-5) so is the "Show devices" row `WEB_OPTION_LOGOUT_URL` would add there (see 12). Without the settings nothing changes. From 7.2.4-6 the same patch shows on Preferences only the notification settings the user's type may change (no empty tables for Clients). | everyone | `patches/web/0004-…` |
+| 7 | **The share dialog finds people by username** too (from 7.2.4-5), not only by display name and e-mail. The server already matched usernames; the web dropped those results. | everyone | `patches/web/0005-…` |
+| 8 | **No Spaces entry** in the left menu. Shares is their first entry and their start page anyway: they have no Personal or Favorites. (7.2.4-5 did this for everyone.) | Client, Employee | `patches/web/0006-…` |
+| 9 | **Shares can't be hidden:** no Hide action, no eye button in "Shared with me", no Shares / Hidden Shares switch. Shares hidden before show in the list again. | Client, Employee | `patches/web/0007-…` |
+| 10 | **No "Copy permanent link".** The link only ever worked for people who already had access. | Client, Employee | `patches/web/0008-…` |
+| 11 | **No text or Markdown files in "New".** Such files still open in the Text Editor. (Its app menu entry needs a personal space upstream.) | Client | `patches/web/0009-…` |
+| 12 | **"Log out" also signs out of an identity provider without a sign-out endpoint** (from 7.2.4-5; Authelia has none): with `WEB_OPTION_LOGOUT_URL` set, "Log out" goes there after OpenCloud's own sign-out, so the next sign-in asks for the password again and another user can sign in. [`deploy/`](deploy/README.md) sets it to Authelia's `/logout`. With OpenCloud's own sign-in nothing changes. | everyone | `patches/web/0010-…` |
+| 13 | **The user types Client and Employee** among the default types (see [above](#user-types-and-the-cant-delete-role)). | – | `patches/server/0002-…` |
+| 14 | **The share role "Can't delete"**, with its icon. | – | `patches/server/0003-…` |
+| 15 | **The type table:** one place in the web code that says which change applies to which user type (`ocCustomFeatures` in web-pkg). | – | `patches/web/0011-…` |
+| 16 | **Apps open a file for editing only with write permission** (`W`); upstream also accepted rename/move (`NV`) alone. | everyone (follows the share) | `patches/web/0012-…` |
+
+**Defaults in the image** (from 7.2.4-6; a compose file can override them): `FRONTEND_DISABLE_RADICALE=true` (no Calendar in the app menu: without a CalDAV server it leads nowhere) and `FRONTEND_CONFIGURABLE_NOTIFICATIONS=true` (the per-event notification table in Preferences).
 
 Everything else is upstream's: the image is the official one with only `/usr/bin/opencloud` replaced, built from the same sources and with the same toolchain and target. `opencloud version` and `status.php` report `7.2.4+custom.<build>`.
 
@@ -46,7 +73,7 @@ Everything else is upstream's: the image is the official one with only `/usr/bin
 ```yaml
 services:
   opencloud:
-    image: ghcr.io/kovacsakos14/oc-custom:7.2.4-5   # was: opencloudeu/opencloud:7.2.4
+    image: ghcr.io/kovacsakos14/oc-custom:7.2.4-6   # was: opencloudeu/opencloud:7.2.4
     volumes:
       - ./config:/etc/opencloud
       - ./data:/var/lib/opencloud
@@ -56,6 +83,7 @@ services:
 - **Update or roll back** by changing the tag, then `docker compose pull && docker compose up -d`.
 - **Tags never change** once published: `7.2.4-1`, `7.2.4-2`, … each mean one build. There's no `latest`, so a server only changes when you change its tag. For extra certainty, pin the digest as well (`…:7.2.4-1@sha256:…`).
 - **The image is public,** so servers pull it without logging in. It holds nothing secret: config and branding stay on each server.
+- **From 7.2.4-5 to 7.2.4-6:** give client accounts the Client type and staff accounts the Employee type, and share client folders as "Can't delete" (existing "Can upload" shares lose rename/move in the apps). Accounts left as User or User Light get upstream's web UI.
 
 ## Branding
 OpenCloud merges `themes/_branding/theme.json` over its own theme on every request. So branding is a folder per server, with no build and no restart: change a file and reload the browser.
@@ -145,25 +173,26 @@ Branding folders carry over; check the release notes for changes to the theme.
 
 ## Rolling back
 OpenCloud doesn't refuse to run an older version, but upgrades can be one-way: some storage migrations have no rollback, and config can change between majors.
-- **Our own rebuilds** (`7.2.4-1` → `7.2.4-2`) only change the patches, not stored data: switch the tag back.
+- **Our own rebuilds** (`7.2.4-1` → `7.2.4-2`) only change the patches, not stored data: switch the tag back. Going back before 7.2.4-6 leaves the Client and Employee types stored and assigned (with upstream's behaviour), and "Can't delete" shares then show as an unnamed set of permissions.
 - **Patch releases** (`7.2.4` → `7.2.5`) normally don't change data formats; read the release notes.
 - **Minor or major upgrades** (7.2 → 8.x) are one-way. Before upgrading, stop the container and snapshot or copy `/var/lib/opencloud` and `/etc/opencloud`. To roll back, restore both together with the old tag. Anything users changed since the upgrade is lost by the restore.
 
 ## Testing
 Builds are tested in a separate OpenCloud test environment (Docker Compose, not part of this repo) with test users of each role and folder shares of each kind. The helpers in `test/` work with any such environment: copy `test/local.env.example` to `test/local.env` (gitignored) and set its compose command, URL and admin app token.
 - `test/use-custom <image> [branding dir]` runs the test environment's OpenCloud on another image, with a branding folder (default `branding/example`); `test/use-custom --official` runs upstream's image of the same version without branding.
-- `test/browser <out dir> user:password …` signs in as each user in a fresh browser profile. It saves screenshots and records where they landed, whether files show as a table, the left menu, the app menu and what "Shared with me" offers (hide buttons, the hidden-shares switch). With `ACTIONS="client1:Client folder/readme.txt"` it also opens that file's context menu and lists its actions (rename, move, delete…); with `NEW=1` it lists the "New" menu in Personal; with `SEARCH="admin:client1"` it types into the share dialog and lists who it offers.
-- `test/check-permissions <user> <share>` lists what OpenCloud reports for each item in a share (`oc:permissions`) as the recipient sees it. A "Can upload" share shows `NV`, with no `D` or `W`.
-- `scripts/smoke-test <image>` starts an image with a fresh config and checks the version, the branding and the web UI (CI runs it on every build).
-- `test/deploy/run.sh [--image <image>] [--keep]` tests `deploy/` from scratch, about 10 minutes, Docker only: the real SWAG image (with a self-signed certificate; Let's Encrypt is skipped) and Mailpit on their own network, then the stack with Authelia and without it. It checks `setup.sh` and every `users.sh` command, and in a browser: a user signing in with a password only, "Change password" opening Authelia's page and changing the password there, a disabled user refused, the desktop app's sign-in (PKCE, its loopback redirect, refresh), the admin registering 2FA at the first sign-in, removing and re-registering it on Authelia's settings page and after `users.sh reset-2fa`; without Authelia, OpenCloud's own sign-in and password dialog. `--keep` leaves it running; `--clean` removes it.
+- `test/type-users` creates a Client (`typeclient`) and an Employee (`typeemployee`) and an admin folder `zz-types` shared to them as "Can't delete" and "Can edit"; it prints their passwords for `test/browser`. `--remove` deletes them again.
+- `test/browser <out dir> user:password …` signs in as each user in a fresh browser profile. It saves screenshots and records where they landed, whether files show as a table, the left menu, the app menu and what "Shared with me" offers (hide buttons, the hidden-shares switch). With `ACTIONS="client1:Client folder/readme.txt"` it also opens that file's context menu and lists its actions (rename, move, delete…); with `NEW=1` it lists the "New" menu in Personal and in those shares; with `OPEN="client1:Client folder/readme.txt"` it opens the file in its app and records whether it's editable; with `PREFS=1` it lists Preferences' notification sections; with `SEARCH="admin:client1"` it types into the share dialog and lists who it offers.
+- `test/check-permissions <user> <share>` lists what OpenCloud reports for each item in a share (`oc:permissions`) as the recipient sees it. A "Can't delete" share shows `NV` (root `SNVCK`), "Can upload" upstream's `SCK` and nothing on files.
+- `scripts/smoke-test <image>` starts an image with a fresh config and checks the version, the branding, the web UI, the user types, the share role and its icon, and the image's defaults (CI runs it on every build).
+- `test/deploy/run.sh [--image <image>] [--keep]` tests `deploy/` from scratch, about 10 minutes, Docker only: the real SWAG image (with a self-signed certificate; Let's Encrypt is skipped) and Mailpit on their own network, then the stack with Authelia and without it. It checks `setup.sh` and every `users.sh` command (also creating Clients and Employees), and in a browser: a user signing in with a password only, "Change password" opening Authelia's page and changing the password there, a disabled user refused, the desktop app's sign-in (PKCE, its loopback redirect, refresh), the admin registering 2FA at the first sign-in, removing and re-registering it on Authelia's settings page and after `users.sh reset-2fa`; without Authelia, OpenCloud's own sign-in and password dialog. `--keep` leaves it running; `--clean` removes it.
+- Unit tests: each patch brings its own (Go for server and reva, vitest for the web; reva's need `golang:1.25-alpine`). The build doesn't run them; see `CLAUDE.md`.
 
-**What to check for each new build:**
-- **A "Can upload" recipient:** items report `NV` and no `D`/`W`. Rename, the Move action, drag and drop and cut/paste work; delete is neither offered nor allowed.
-- **A public upload link:** no rename/move.
-- **Can view and Can edit shares:** unchanged.
-- **A fresh browser:** files show as a table. Every account lands on "Shared with me"; the left menu is Shares, Personal (not for User Light), Favorites, Deleted files, without Spaces; the app menu has no Text Editor (nor Calendar with the recommended setting).
-- **"Shared with me":** no eye buttons and no Shares / Hidden Shares switch. A User Light recipient's context menu has no "Copy permanent link".
-- **The share dialog:** typing a username finds the user. "New" has no text or Markdown file entries, yet such files still open and save in the Text Editor.
+**What to check for each new build** (`test/type-users`, then `test/browser` with `NEW=1 PREFS=1` and `ACTIONS`/`OPEN` on `zz-types/note.txt`, plus an upstream User and the admin):
+- **A Client** lands on "Shared with me"; the menu is Shares and Deleted files; no hide buttons or switch; "New" in the share has no text files; the file's menu has Move and Rename but no Delete and no "Copy permanent link"; the file opens read-only; Preferences shows no notification sections.
+- **An Employee:** the same, except text files in "New", Delete on "Can edit" files, the file opens editable, and Preferences shows the notification table.
+- **An upstream User and the admin:** upstream's web (land on Personal, Spaces, hide buttons, Text Editor in the menus, the notification table).
+- **Permissions:** `test/check-permissions` for "Can't delete" (`NV`), "Can upload" (upstream's) and "Can edit" (unchanged); a public upload link has no rename/move.
+- **The share dialog** offers "Can't delete" with its icon, and typing a username finds the user.
 - **The branding:** it shows on the sign-in page and in the web UI. Without a branding folder, the sign-in page looks like upstream's.
 - **The test environment's own end-to-end tests still pass** (migration, user and share management).
 
@@ -182,7 +211,7 @@ Builds are tested in a separate OpenCloud test environment (Docker Compose, not 
 - `CLAUDE.md`: working notes for continuing development (decisions, findings, next steps).
 
 ## Status
-**Released:** `7.2.4-5` (2026-10-22; `sha256:e313341d…`): patches 7–12 (username search, Shares first and no Spaces, no hiding of shares, no permanent link for User Light, the Text Editor out of the menus, "Log out" through Authelia's `/logout`) and Calendar off in `deploy/`; otherwise the same as `7.2.4-4`. `7.2.4-4` (2026-10-22): patch 6 (["Change password" can open an external password page](#whats-changed)), for the optional Authelia setup in [`deploy/`](deploy/README.md), tested with Authelia 4.39.28 (`AUTHELIA_IMAGE` in `versions.env`); otherwise the same as `7.2.4-3`. `7.2.4-3` (2026-10-21): the sign-in page takes background images and the favicon only from the server itself (no `https://` URLs, `%` escapes or `..`); the web is built with a pinned node image and pnpm, releases without caches. `7.2.4-2` (2026-10-21): adds the sign-in background image (`common.signin.backgroundImage`) to patch 5; otherwise the same as `7.2.4-1`.
+**Released:** `7.2.4-6` (2026-10-26): the user types Client and Employee and the share role "Can't delete" (patches 13–16); the file-server changes of 7.2.4-5 now apply to Clients and Employees only (Admins, Users and User Light get upstream's web again), "Can upload" is upstream's again, and Calendar off and the notification table are image defaults. `7.2.4-5` (2026-10-22; `sha256:e313341d…`): patches 7–12 (username search, Shares first and no Spaces, no hiding of shares, no permanent link for User Light, the Text Editor out of the menus, "Log out" through Authelia's `/logout`) and Calendar off in `deploy/`; otherwise the same as `7.2.4-4`. `7.2.4-4` (2026-10-22): patch 6 (["Change password" can open an external password page](#whats-changed)), for the optional Authelia setup in [`deploy/`](deploy/README.md), tested with Authelia 4.39.28 (`AUTHELIA_IMAGE` in `versions.env`); otherwise the same as `7.2.4-3`. `7.2.4-3` (2026-10-21): the sign-in page takes background images and the favicon only from the server itself (no `https://` URLs, `%` escapes or `..`); the web is built with a pinned node image and pnpm, releases without caches. `7.2.4-2` (2026-10-21): adds the sign-in background image (`common.signin.backgroundImage`) to patch 5; otherwise the same as `7.2.4-1`.
 
 `7.2.4-1` (2026-10-21), OpenCloud 7.2.4 with patches 1–5. Tested:
 - what a "Can upload" recipient is told and can do (rename and move yes, delete no);
@@ -192,12 +221,12 @@ Builds are tested in a separate OpenCloud test environment (Docker Compose, not 
 - the branding on the sign-in page and in the web UI;
 - the test environment's end-to-end tests (migration, user and share management).
 
-**Upstream compatibility** (`scripts/compat`, 2026-10-22):
+**Upstream compatibility** (`scripts/compat`, 2026-10-26):
 
 | OpenCloud | Patches |
 |---|---|
 | 7.2.4, stable-7.2 (the coming 7.2.5) | All apply |
-| 8.1.0 (rolling) | Server, reva, `web/0001`, `0002` and `0008` apply; `web/0003`–`0007`, `0009` and `0010` conflict (web 8.x changed those files) and need a rebase |
+| 8.1.0 (rolling) | Server, reva, `web/0001`, `0002`, `0008`, `0011` and `0012` apply; `web/0003`–`0007`, `0009` and `0010` conflict (web 8.x changed those files) and need a rebase |
 
 **Optional sign-in with 2FA through Authelia (from 7.2.4-4).** OpenCloud's built-in sign-in has no two-factor authentication. oc-custom offers [Authelia](https://www.authelia.com/) (Apache-2.0) as an optional, tested companion ([`deploy/`](deploy/README.md)):
 - **Without Authelia nothing changes:** OpenCloud's built-in sign-in and its own "Change password" dialog.
@@ -209,7 +238,7 @@ Builds are tested in a separate OpenCloud test environment (Docker Compose, not 
 
 **Next:**
 - **7.2.5:** decide whether it's worth a rebuild once it's released.
-- **The next production release** (due mid-November 2026, probably 8.x): rebase the web patches that conflict (see the table), test, and snapshot servers before upgrading, since 7.2 → 8 is one-way.
+- **The next production release** (due mid-November 2026, probably 8.x): rebase the web patches that conflict (see the table), check that 8.x's new default user-type permissions and share roles leave ours unique, test, and snapshot servers before upgrading, since 7.2 → 8 is one-way.
 
 ## Licence
 - **Upstream:** OpenCloud's server and reva are Apache-2.0; OpenCloud Web is AGPL-3.0.

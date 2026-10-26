@@ -13,7 +13,7 @@ port="${SMOKE_PORT:-9299}"
 trap 'docker rm -f "$name" >/dev/null 2>&1 || true' EXIT
 
 docker run -d --name "$name" -p "127.0.0.1:$port:9200" \
-    -e OC_URL="https://localhost:$port" -e OC_INSECURE=true -e PROXY_HTTP_ADDR=0.0.0.0:9200 \
+    -e OC_URL="https://localhost:$port" -e OC_INSECURE=true -e PROXY_HTTP_ADDR=0.0.0.0:9200 -e PROXY_ENABLE_BASIC_AUTH=true \
     -v "$repo/branding/example:/var/lib/opencloud/web/assets/themes/_branding:ro" \
     --entrypoint sh "$image" -c 'opencloud init --insecure true --admin-password smoke-test >/dev/null && exec opencloud server' >/dev/null
 
@@ -44,3 +44,19 @@ echo "ok  branding"
 page="$(curl -fsk "$url/")" || fail "the web UI doesn't answer"
 grep -qi '<html' <<<"$page" || fail "the web UI isn't served: ${page:0:200}"
 echo "ok  web UI"
+
+apps="$(curl -fsk -u admin:smoke-test "$url/graph/v1.0/applications")" || fail "Graph's applications don't answer"
+for type in Client Employee "User Light" Admin; do
+    grep -q "\"displayName\":\"$type\"" <<<"$apps" || fail "no user type $type in $apps"
+done
+echo "ok  user types"
+
+roles="$(curl -fsk -u admin:smoke-test "$url/graph/v1beta1/roleManagement/permissions/roleDefinitions")" || fail "Graph's share roles don't answer"
+grep -q '"id":"a61a37ad-42f2-46f6-a047-fe1906b525e2"' <<<"$roles" || fail "the share role \"Can't delete\" isn't offered"
+grep -Eq '"a61a37ad-42f2-46f6-a047-fe1906b525e2":\{[^}]*"iconName":"folder-shield-2"' <<<"$theme" || fail "the share role \"Can't delete\" has no icon in theme.json"
+echo "ok  share role"
+
+caps="$(curl -fsk -u admin:smoke-test "$url/ocs/v1.php/cloud/capabilities?format=json")" || fail "no capabilities"
+grep -Eq '"support-radicale": ?false' <<<"$caps" || fail "Calendar isn't off by default"
+grep -Eq '"notifications": ?\{[^}]*"configurable": ?true' <<<"$caps" || fail "notifications aren't configurable by default"
+echo "ok  image defaults"

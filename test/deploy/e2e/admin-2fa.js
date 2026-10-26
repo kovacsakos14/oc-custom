@@ -12,7 +12,7 @@ async function signInWithTotp(b, secret) {
   await p.waitForSelector('#otp-input input', { timeout: 20000 });
   await p.click('#otp-input input');
   await p.keyboard.type(await freshTotp(secret));
-  await inFiles(p, 'Shared with me');
+  await inFiles(p);
   return p;
 }
 

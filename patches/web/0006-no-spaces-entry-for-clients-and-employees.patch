@@ -1,0 +1,72 @@
+diff --git a/packages/web-app-files/src/index.ts b/packages/web-app-files/src/index.ts
+index 1864e10..dfe4671 100644
+--- a/packages/web-app-files/src/index.ts
++++ b/packages/web-app-files/src/index.ts
+@@ -14,6 +14,7 @@ import {
+   defineWebApplication,
+   useCapabilityStore,
+   useEmbedMode,
++  useOcCustomFeatures,
+   useSpacesStore,
+   useUserStore
+ } from '@opencloud-eu/web-pkg'
+@@ -40,6 +41,7 @@ export const navItems: ClassicApplicationScript['navItems'] = ({ $ability, $gett
+   const userStore = useUserStore()
+   const capabilityStore = useCapabilityStore()
+   const { isEnabled: isEmbedModeEnabled } = useEmbedMode()
++  const { has } = useOcCustomFeatures()
+ 
+   return [
+     {
+@@ -103,7 +105,8 @@ export const navItems: ClassicApplicationScript['navItems'] = ({ $ability, $gett
+       },
+       activeFor: [{ path: `/${appInfo.id}/spaces/project` }],
+       isVisible() {
+-        return capabilityStore.spacesProjects
++        // oc-custom: no Spaces entry for Clients and Employees
++        return capabilityStore.spacesProjects && !has('hideSpaces')
+       },
+       priority: 40
+     },
+diff --git a/packages/web-app-files/tests/unit/index.spec.ts b/packages/web-app-files/tests/unit/index.spec.ts
+index 5201cf2..8d4b71c 100644
+--- a/packages/web-app-files/tests/unit/index.spec.ts
++++ b/packages/web-app-files/tests/unit/index.spec.ts
+@@ -1,6 +1,13 @@
+ import { createPinia, setActivePinia } from 'pinia'
+ import { navItems } from '../../src/index'
+-import { AppNavigationItem, GlobalProperties, useSpacesStore } from '@opencloud-eu/web-pkg'
++import {
++  AppNavigationItem,
++  GlobalProperties,
++  useCapabilityStore,
++  useSpacesStore,
++  useUserStore
++} from '@opencloud-eu/web-pkg'
++import { User } from '@opencloud-eu/web-client/graph/generated'
+ import { SpaceResource } from '@opencloud-eu/web-client'
+ import { mock } from 'vitest-mock-extended'
+ 
+@@ -32,5 +39,22 @@ describe('Web app files', () => {
+         expect(items[0].isVisible()).toBeFalsy()
+       })
+     })
++    // oc-custom
++    describe('Spaces', () => {
++      function spacesItem(typeId: string) {
++        useCapabilityStore().capabilities.spaces = { projects: true } as any
++        useUserStore().user = mock<User>({ appRoleAssignments: [{ id: typeId } as any] })
++        const items = callableNavItems(mock<GlobalProperties>())
++        return items.find((i) => i.route.path === '/files/spaces/projects')
++      }
++      it.each([
++        ['User', 'd7beeea8-8ff4-406b-8fb6-ab2dd81e6b11', true],
++        ['Admin', '71881883-1768-46bd-a24d-a356a2afdf7f', true],
++        ['Client', '38f0649f-b600-4188-b138-fbd2c773cc43', false],
++        ['Employee', '12047bc6-9aa3-49f6-8d78-e64b3065cd99', false]
++      ])('is visible for a %s: %s', (_, typeId, visible) => {
++        expect(spacesItem(typeId).isVisible()).toBe(visible)
++      })
++    })
+   })
+ })

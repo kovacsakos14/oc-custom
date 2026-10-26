@@ -1,0 +1,97 @@
+diff --git a/packages/web-app-files/src/composables/actions/files/useFileActionsCreateNewFile.ts b/packages/web-app-files/src/composables/actions/files/useFileActionsCreateNewFile.ts
+index 8fa9dcc..98e5a50 100644
+--- a/packages/web-app-files/src/composables/actions/files/useFileActionsCreateNewFile.ts
++++ b/packages/web-app-files/src/composables/actions/files/useFileActionsCreateNewFile.ts
+@@ -16,6 +16,7 @@ import {
+   useIsResourceNameValid,
+   useMessages,
+   useModals,
++  useOcCustomFeatures,
+   useResourcesStore,
+   useUserStore
+ } from '@opencloud-eu/web-pkg'
+@@ -27,6 +28,7 @@ export const useFileActionsCreateNewFile = ({ space }: { space?: Ref<SpaceResour
+   const { dispatchModal } = useModals()
+   const appsStore = useAppsStore()
+   const { isEnabled: isEmbedModeEnabled } = useEmbedMode()
++  const { has } = useOcCustomFeatures()
+ 
+   const { openEditor } = useFileActions()
+   const clientService = useClientService()
+@@ -147,6 +149,11 @@ export const useFileActionsCreateNewFile = ({ space }: { space?: Ref<SpaceResour
+     }
+ 
+     for (const [, appFileExtension] of Object.entries(defaultMapping)) {
++      // oc-custom: no new text files for Clients (text files still open in the editor); left
++      // out of the list, as the "New" menu doesn't ask isVisible
++      if (appFileExtension.app === 'text-editor' && has('hideTextEditor')) {
++        continue
++      }
+       actions.push({
+         name: 'create-new-file',
+         icon: 'add',
+diff --git a/packages/web-app-files/tests/unit/composables/actions/files/useFileActionsCreateNewFile.spec.ts b/packages/web-app-files/tests/unit/composables/actions/files/useFileActionsCreateNewFile.spec.ts
+index 0bd0ea8..563aad2 100644
+--- a/packages/web-app-files/tests/unit/composables/actions/files/useFileActionsCreateNewFile.spec.ts
++++ b/packages/web-app-files/tests/unit/composables/actions/files/useFileActionsCreateNewFile.spec.ts
+@@ -1,4 +1,5 @@
+ import { mock } from 'vitest-mock-extended'
++import { User } from '@opencloud-eu/web-client/graph/generated'
+ import { ref, unref } from 'vue'
+ import { Resource, SpaceResource } from '@opencloud-eu/web-client'
+ import { defaultComponentMocks, getComposableWrapper } from '@opencloud-eu/web-test-helpers'
+@@ -18,6 +19,21 @@ vi.mock('@opencloud-eu/web-pkg', async (importOriginal) => ({
+ }))
+ 
+ describe('useFileActionsCreateNewFile', () => {
++  // oc-custom
++  describe('actions', () => {
++    it.each([
++      ['User', 'd7beeea8-8ff4-406b-8fb6-ab2dd81e6b11', true],
++      ['Employee', '12047bc6-9aa3-49f6-8d78-e64b3065cd99', true],
++      ['Client', '38f0649f-b600-4188-b138-fbd2c773cc43', false]
++    ])('offers a new text file to a %s: %s', (_, typeId, visible) => {
++      getWrapper({
++        typeId,
++        setup: ({ actions }) => {
++          expect(unref(actions).some(({ ext }) => ext === '.txt')).toBe(visible)
++        }
++      })
++    })
++  })
+   describe('openFile', () => {
+     it('upserts the resource before opening', () => {
+       const space = mock<SpaceResource>({ id: '1' })
+@@ -53,8 +69,10 @@ describe('useFileActionsCreateNewFile', () => {
+ function getWrapper({
+   resolveCreateFile = true,
+   space = undefined,
+-  setup
++  setup,
++  typeId = undefined
+ }: {
++  typeId?: string
+   resolveCreateFile?: boolean
+   space?: SpaceResource
+   setup: (instance: ReturnType<typeof useFileActionsCreateNewFile>) => void
+@@ -77,7 +95,7 @@ function getWrapper({
+     return Promise.reject('error')
+   })
+ 
+-  const currentFolder = mock<Resource>({ id: '1', path: '/' })
++  const currentFolder = mock<Resource>({ id: '1', path: '/', canUpload: () => true })
+ 
+   return {
+     wrapper: getComposableWrapper(
+@@ -99,7 +117,10 @@ function getWrapper({
+                 })
+               ]
+             },
+-            resourcesStore: { currentFolder }
++            resourcesStore: { currentFolder },
++            userState: typeId && {
++              user: mock<User>({ appRoleAssignments: [{ id: typeId } as any] })
++            }
+           }
+         }
+       }

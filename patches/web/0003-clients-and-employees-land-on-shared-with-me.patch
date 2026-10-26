@@ -1,0 +1,92 @@
+diff --git a/packages/web-app-files/src/views/spaces/DriveRedirect.vue b/packages/web-app-files/src/views/spaces/DriveRedirect.vue
+index 1a0602b..622cf84 100644
+--- a/packages/web-app-files/src/views/spaces/DriveRedirect.vue
++++ b/packages/web-app-files/src/views/spaces/DriveRedirect.vue
+@@ -6,11 +6,11 @@
+ 
+ <script lang="ts">
+ import { computed, defineComponent, unref } from 'vue'
+-import { useRoute, useRouter, useSpacesStore } from '@opencloud-eu/web-pkg'
++import { useOcCustomFeatures, useRoute, useRouter, useSpacesStore } from '@opencloud-eu/web-pkg'
+ import { AppLoadingSpinner } from '@opencloud-eu/web-pkg'
+ import { urlJoin } from '@opencloud-eu/web-client'
+ import { createFileRouteOptions } from '@opencloud-eu/web-pkg'
+-import { createLocationSpaces } from '@opencloud-eu/web-pkg'
++import { createLocationShares, createLocationSpaces } from '@opencloud-eu/web-pkg'
+ import omit from 'lodash-es/omit'
+ import { RouteLocationRaw } from 'vue-router'
+ 
+@@ -34,6 +34,7 @@ export default defineComponent({
+     const router = useRouter()
+     const route = useRoute()
+     const spacesStore = useSpacesStore()
++    const { has } = useOcCustomFeatures()
+ 
+     const personalSpace = computed(() => {
+       return spacesStore.spaces.find((space) => space.driveType === 'personal')
+@@ -46,7 +47,12 @@ export default defineComponent({
+     })
+ 
+     if (!unref(personalSpace)) {
+-      router.replace(createLocationSpaces('files-spaces-projects'))
++      // oc-custom: Clients and Employees have no Spaces page, they land on "Shared with me"
++      router.replace(
++        has('sharesLanding')
++          ? createLocationShares('files-shares-with-me')
++          : createLocationSpaces('files-spaces-projects')
++      )
+     } else {
+       const { params, query } = createFileRouteOptions(unref(personalSpace), {
+         path: unref(itemPath)
+diff --git a/packages/web-app-files/tests/unit/views/spaces/DriveRedirect.spec.ts b/packages/web-app-files/tests/unit/views/spaces/DriveRedirect.spec.ts
+index f16fe0e..4ab0ab4 100644
+--- a/packages/web-app-files/tests/unit/views/spaces/DriveRedirect.spec.ts
++++ b/packages/web-app-files/tests/unit/views/spaces/DriveRedirect.spec.ts
+@@ -1,5 +1,6 @@
+ import DriveRedirect from '../../../../src/views/spaces/DriveRedirect.vue'
+ import { mock } from 'vitest-mock-extended'
++import { User } from '@opencloud-eu/web-client/graph/generated'
+ import {
+   defaultPlugins,
+   mount,
+@@ -15,9 +16,22 @@ describe('DriveRedirect view', () => {
+       name: 'files-spaces-projects'
+     })
+   })
++  // oc-custom
++  it.each([
++    ['Client', '38f0649f-b600-4188-b138-fbd2c773cc43'],
++    ['Employee', '12047bc6-9aa3-49f6-8d78-e64b3065cd99']
++  ])('redirects a %s to "shared with me" if no personal space exists', (_, typeId) => {
++    const { mocks } = getMountedWrapper({ typeId })
++    expect(mocks.$router.replace).toHaveBeenCalledWith({
++      name: 'files-shares-with-me'
++    })
++  })
+ })
+ 
+-function getMountedWrapper({ currentRouteName = 'files-spaces-generic' } = {}) {
++function getMountedWrapper({
++  currentRouteName = 'files-spaces-generic',
++  typeId = undefined
++}: { currentRouteName?: string; typeId?: string } = {}) {
+   const mocks = {
+     ...defaultComponentMocks({ currentRoute: mock<RouteLocation>({ name: currentRouteName }) })
+   }
+@@ -26,7 +40,15 @@ function getMountedWrapper({ currentRouteName = 'files-spaces-generic' } = {}) {
+     mocks,
+     wrapper: mount(DriveRedirect, {
+       global: {
+-        plugins: [...defaultPlugins()],
++        plugins: [
++          ...defaultPlugins({
++            piniaOptions: {
++              userState: typeId && {
++                user: mock<User>({ appRoleAssignments: [{ id: typeId } as any] })
++              }
++            }
++          })
++        ],
+         stubs: defaultStubs,
+         mocks,
+         provide: mocks
