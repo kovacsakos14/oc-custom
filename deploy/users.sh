@@ -78,10 +78,17 @@ json() { yq -p json -o json -I0 "$@"; } # JSON in, compact JSON out
 user_id() { api GET "/graph/v1.0/users/$1" | yq -p json '.id'; }
 
 set_role() { # USER ROLE_ID
-    local id app
+    local id
     id="$(user_id "$1")"
-    app="$(api GET /graph/v1.0/applications | yq -p json '.value[0].id')"
-    export Y_ID="$id" Y_APP="$app" Y_ROLE="$2"
+    set_role_id "$id" "$2"
+}
+
+set_role_id() { # USER_ID ROLE_ID
+    local app
+    # Checked here: OpenCloud accepts an assignment with empty ids, and leaves the user without a role
+    app="$(api GET /graph/v1.0/applications | yq -p json '.value[0].id // ""')" || app=""
+    [ -n "$app" ] || die "OpenCloud: no application to assign the role from"
+    export Y_ID="$1" Y_APP="$app" Y_ROLE="$2"
     api POST "/graph/v1.0/users/$id/appRoleAssignments" \
         "$(echo '{}' | json '.principalId = strenv(Y_ID) | .resourceId = strenv(Y_APP) | .appRoleId = strenv(Y_ROLE)')" > /dev/null
 }
@@ -167,7 +174,7 @@ cmd_list() {
 }
 
 cmd_add() {
-    local user="${1-}" name="" email="" role=user random="" pw body hash rid
+    local user="${1-}" name="" email="" role=user random="" pw body hash rid id
     [ -n "$user" ] || die "add USER"; shift
     valid_name "$user"
     while [ $# -gt 0 ]; do
@@ -191,11 +198,20 @@ cmd_add() {
     fi
     export Y_USER="$user" Y_NAME="$name" Y_EMAIL="$email" Y_HASH="$pw"
     body="$(echo '{}' | json '.onPremisesSamAccountName = strenv(Y_USER) | .displayName = strenv(Y_NAME)
-        | .passwordProfile.password = strenv(Y_HASH) | .accountEnabled = true
+        | .passwordProfile.password = strenv(Y_HASH) | .accountEnabled = false
         | (if strenv(Y_EMAIL) != "" then .mail = strenv(Y_EMAIL) else . end)')"
-    api POST /graph/v1.0/users "$body" > /dev/null
+    # Created disabled and enabled once it has its role: until then it's a User
+    # (personal space, sharing, links). If that fails, the account goes again.
+    # The steps run in subshells, so a failing one returns instead of exiting.
+    id="$(api POST /graph/v1.0/users "$body" | yq -p json '.id // ""')"
+    [ -n "$id" ] || die "OpenCloud: created $user, but got no id back; check ./users.sh list"
+    if ! { { [ "$role" = user ] || (set_role_id "$id" "$rid"); } &&
+        (api PATCH "/graph/v1.0/users/$id" '{"accountEnabled":true}' > /dev/null); }; then
+        (api DELETE "/graph/v1.0/users/$id" > /dev/null) ||
+            die "Couldn't set up $user, nor remove the account again: ./users.sh delete $user"
+        die "Couldn't set up $user; the account was removed again. Run add again."
+    fi
     echo "OpenCloud: created $user"
-    [ "$role" = user ] || set_role "$user" "$rid"
     if with_authelia; then
         export Y_HASH="$hash" Y_GROUP="$([ "$role" = admin ] && echo admins || true)"
         users_yaml | yq '.users[strenv(Y_USER)] = {"displayname": strenv(Y_NAME), "email": strenv(Y_EMAIL),
