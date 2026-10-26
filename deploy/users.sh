@@ -51,7 +51,9 @@ token() {
         echo "Removed .admin-token (an older users.sh's token). Its token stays valid until it expires: delete it under admin's Settings -> App Tokens." >&2
     fi
     for i in 1 2 3 4 5; do
-        out="$(docker compose exec -T opencloud opencloud auth-app create --user-name admin --expiration 10m 2>&1)" && break
+        # < /dev/null: this runs before the command, and a password piped to
+        # users.sh is still waiting on stdin (docker compose exec would read it)
+        out="$(docker compose exec -T opencloud opencloud auth-app create --user-name admin --expiration 10m 2>&1 < /dev/null)" && break
         sleep 5
     done
     ADMIN_TOKEN="$(printf '%s\n' "$out" | sed -n 's/^ *token: //p')"
