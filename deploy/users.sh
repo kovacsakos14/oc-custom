@@ -170,6 +170,8 @@ read_password() { # [--random]: prints the password
 
 valid_name() {
     [[ "$1" =~ ^[A-Za-z0-9_.@-]+$ ]] || die "Usernames may only contain letters, digits and _ . @ -"
+    # . and .. would be other paths in OpenCloud's API
+    [[ "$1" != .* ]] || die "Usernames can't start with a dot"
 }
 
 # --- Commands

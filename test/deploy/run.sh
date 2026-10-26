@@ -214,6 +214,7 @@ check "users.sh role alice user enables it again; the link works again" \
 admins() { grep -A8 "^  $1:" authelia/users/users_database.yml | grep -q -- '- admins'; }
 check "users.sh role alice admin puts her in admins" './users.sh role alice admin && admins alice'
 check "users.sh role alice user takes her out" './users.sh role alice user && ! admins alice'
+check "users.sh refuses the usernames . and .." '! ./users.sh disable .. && ! ./users.sh disable .'
 check "users.sh role alice boss is refused" '! ./users.sh role alice boss'
 check "users.sh delete bob (both sides)" \
     './users.sh delete bob < /dev/null && ! ./users.sh list | grep -q "^bob " && ! grep -q "^  bob:" authelia/users/users_database.yml'
