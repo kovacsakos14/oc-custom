@@ -188,15 +188,17 @@ valid_name() {
 cmd_list() {
     local oc au
     oc="$(api GET '/graph/v1.0/users?$expand=appRoleAssignments' | yq -p json \
-        '.value[] | [.onPremisesSamAccountName, .displayName, (.mail // "-"), .accountEnabled, (.appRoleAssignments[0].appRoleId // "-")] | map(tostring) | join("\t")')"
+        '.value[] | [.onPremisesSamAccountName, .displayName, (.mail // "-"), .accountEnabled, (.appRoleAssignments[0].appRoleId // "-")]
+            | map(tostring | sub("[\t\n]"; " ")) | join("\t")')" # tabs and line breaks would shift the columns
     if with_authelia; then
         au="$(users_yaml | yq '.users | to_entries | .[] | [.key, (.value.disabled // false), ((.value.groups // []) | join(",") | select(. != "") // "-")] | map(tostring) | join("\t")')"
     else
         au=""
     fi
-    printf '%s\n' "$oc" | awk -F'\t' -v au="$au" -v a="$ROLE_ADMIN" -v u="$ROLE_USER" -v l="$ROLE_LIGHT" -v c="$ROLE_CLIENT" -v e="$ROLE_EMPLOYEE" -v with="$(with_authelia && echo 1)" '
+    # Authelia's rows through the environment: awk -v would turn \ in names into escapes
+    printf '%s\n' "$oc" | AU="$au" awk -F'\t' -v a="$ROLE_ADMIN" -v u="$ROLE_USER" -v l="$ROLE_LIGHT" -v c="$ROLE_CLIENT" -v e="$ROLE_EMPLOYEE" -v with="$(with_authelia && echo 1)" '
         BEGIN {
-            n = split(au, rows, "\n")
+            n = split(ENVIRON["AU"], rows, "\n")
             for (i = 1; i <= n; i++) { split(rows[i], f, "\t"); if (f[1] != "") { off[f[1]] = f[2]; groups[f[1]] = f[3] } }
             role[a] = "admin"; role[u] = "user"; role[l] = "light"; role[c] = "client"; role[e] = "employee"
             printf "%-20s %-24s %-28s %-8s %-8s %s\n", "USER", "NAME", "E-MAIL", "ROLE", "ENABLED", (with ? "AUTHELIA" : "")
@@ -214,6 +216,7 @@ cmd_add() {
     valid_name "$user"
     while [ $# -gt 0 ]; do
         case "$1" in
+            --name|--email|--role) [ $# -ge 2 ] || die "$1 needs a value" ;;&
             --name) name="$2"; shift 2 ;;
             --email) email="$2"; shift 2 ;;
             --role) role="$2"; shift 2 ;;
@@ -260,6 +263,7 @@ cmd_passwd() {
     local user="${1-}" pw hash id body
     [ -n "$user" ] || die "passwd USER"
     valid_name "$user"
+    case "${2-}" in ""|--random) ;; *) die "passwd USER [--random]" ;; esac
     pw="$(read_password "${2-}")"
     if with_authelia; then
         hash="$(hash_password "$pw")"
