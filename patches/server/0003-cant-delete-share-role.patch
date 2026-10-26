@@ -1,0 +1,122 @@
+diff --git a/services/graph/pkg/unifiedrole/roles_custom.go b/services/graph/pkg/unifiedrole/roles_custom.go
+new file mode 100644
+index 00000000..3fac1cee
+--- /dev/null
++++ b/services/graph/pkg/unifiedrole/roles_custom.go
+@@ -0,0 +1,52 @@
++package unifiedrole
++
++// oc-custom: a share role of our own, "Can't delete", for client folders. It's
++// upstream's "Can upload" plus reading the quota: Graph tells roles apart by
++// their exact set of actions, and reading the quota changes nothing else
++// (reva's OCS "read" bit also needs the trash bin). Our reva patch reports
++// rename/move (NV) for this set only. Enabled by default like every built-in
++// role that isn't in the graph config's disabled-by-default list.
++
++import (
++	libregraph "github.com/opencloud-eu/libre-graph-api-go"
++	"github.com/opencloud-eu/reva/v2/pkg/conversions"
++	"google.golang.org/protobuf/proto"
++
++	"github.com/opencloud-eu/opencloud/pkg/l10n"
++)
++
++const (
++	// UnifiedRoleCantDeleteID Unified role "Can't delete" id.
++	UnifiedRoleCantDeleteID = "a61a37ad-42f2-46f6-a047-fe1906b525e2"
++)
++
++var (
++	// UnifiedRole CantDelete, Role Description (resolves directly)
++	_cantDeleteUnifiedRoleDescription = l10n.Template("View, download, upload, rename and move. No editing or deleting.")
++
++	// UnifiedRole CantDelete, Role DisplayName (resolves directly)
++	_cantDeleteUnifiedRoleDisplayName = l10n.Template("Can't delete")
++
++	// roleCantDelete creates the "Can't delete" role
++	roleCantDelete = func() *libregraph.UnifiedRoleDefinition {
++		p := conversions.NewEditorLiteRole().CS3ResourcePermissions()
++		p.GetQuota = true
++		return &libregraph.UnifiedRoleDefinition{
++			Id:          proto.String(UnifiedRoleCantDeleteID),
++			Description: proto.String(_cantDeleteUnifiedRoleDescription),
++			DisplayName: proto.String(_cantDeleteUnifiedRoleDisplayName),
++			RolePermissions: []libregraph.UnifiedRolePermission{
++				{
++					AllowedResourceActions: CS3ResourcePermissionsToLibregraphActions(p),
++					Condition:              proto.String(UnifiedRoleConditionFolder),
++				},
++			},
++			// between "Can upload" (50) and "Can edit" (60)
++			LibreGraphWeight: proto.Int32(55),
++		}
++	}()
++)
++
++func init() {
++	buildInRoles = append(buildInRoles, roleCantDelete)
++}
+diff --git a/services/graph/pkg/unifiedrole/roles_custom_test.go b/services/graph/pkg/unifiedrole/roles_custom_test.go
+new file mode 100644
+index 00000000..532db625
+--- /dev/null
++++ b/services/graph/pkg/unifiedrole/roles_custom_test.go
+@@ -0,0 +1,58 @@
++package unifiedrole
++
++// oc-custom: "Can't delete" is a built-in role with a set of actions no other
++// role has, and a share with that set is recognised as it again.
++
++import (
++	"slices"
++	"testing"
++
++	libregraph "github.com/opencloud-eu/libre-graph-api-go"
++	"github.com/opencloud-eu/reva/v2/pkg/conversions"
++)
++
++func TestCantDeleteRole(t *testing.T) {
++	role, err := GetRole(RoleFilterIDs(UnifiedRoleCantDeleteID))
++	if err != nil {
++		t.Fatalf("no built-in role %s: %v", UnifiedRoleCantDeleteID, err)
++	}
++	if got := role.GetRolePermissions()[0].GetCondition(); got != UnifiedRoleConditionFolder {
++		t.Errorf("condition %q, want folders only", got)
++	}
++
++	// "Can upload" plus reading the quota, nothing else
++	want := CS3ResourcePermissionsToLibregraphActions(conversions.NewEditorLiteRole().CS3ResourcePermissions())
++	want = append(want, DriveItemQuotaRead)
++	got := role.GetRolePermissions()[0].GetAllowedResourceActions()
++	slices.Sort(want)
++	got = slices.Sorted(slices.Values(got))
++	if !slices.Equal(got, want) {
++		t.Errorf("actions %v, want %v", got, want)
++	}
++	if conversions.NewEditorLiteRole().CS3ResourcePermissions().GetQuota {
++		t.Error("building our role changed upstream's Can upload")
++	}
++
++	// no other built-in role has the same actions, for any resource type
++	for _, other := range GetRoles(RoleFilterAll()) {
++		if other.GetId() == UnifiedRoleCantDeleteID {
++			continue
++		}
++		for _, p := range other.GetRolePermissions() {
++			if slices.Equal(slices.Sorted(slices.Values(p.GetAllowedResourceActions())), got) {
++				t.Errorf("role %s (%s) has the same actions", other.GetDisplayName(), other.GetId())
++			}
++		}
++	}
++
++	// a stored share maps back to its role, and Can upload stays Can upload
++	all := GetRoles(RoleFilterAll())
++	cs3 := PermissionsToCS3ResourcePermissions([]*libregraph.UnifiedRolePermission{&role.GetRolePermissions()[0]})
++	if r := CS3ResourcePermissionsToRole(all, cs3, UnifiedRoleConditionFolder, false); r == nil || r.GetId() != UnifiedRoleCantDeleteID {
++		t.Errorf("our permissions map to %v, want %s", r.GetId(), UnifiedRoleCantDeleteID)
++	}
++	lite := conversions.NewEditorLiteRole().CS3ResourcePermissions()
++	if r := CS3ResourcePermissionsToRole(all, lite, UnifiedRoleConditionFolder, false); r == nil || r.GetId() != UnifiedRoleEditorLiteID {
++		t.Errorf("Can upload's permissions map to %v, want %s", r.GetId(), UnifiedRoleEditorLiteID)
++	}
++}
