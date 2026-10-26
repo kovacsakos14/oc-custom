@@ -6,9 +6,16 @@ set -euo pipefail
 cd "$(dirname "$0")"
 . ./lib.sh
 
-for k in OC_STACK OC_DOMAIN OC_ADMIN_PASSWORD OC_IMAGE SWAG_NETWORK; do
+for k in OC_STACK OC_DOMAIN OC_IMAGE SWAG_NETWORK; do
     [ -n "$(conf "$k")" ] || die "Set $k in .env"
 done
+# The admin password is needed until the first start (and Authelia's first
+# user file); after that it can go from .env
+first_start=""
+[ -f config/opencloud.yaml ] || first_start=1
+if [ -n "$first_start" ] || { with_authelia && [ ! -f "$USERS_FILE" ]; }; then
+    [ -n "$(conf OC_ADMIN_PASSWORD)" ] || die "Set OC_ADMIN_PASSWORD in .env"
+fi
 case "$(conf OC_STACK)" in *[!a-z0-9_-]*) die "OC_STACK: lowercase letters, digits, - and _ only" ;; esac
 case "$(conf OC_DOMAIN)" in *[!A-Za-z0-9.-]*) die "OC_DOMAIN: a host name only, e.g. cloud.example.com" ;; esac
 if [ -n "$(conf SMTP_HOST)" ]; then
@@ -30,6 +37,11 @@ fi
 
 # Docker would create the branding mount point inside data/ as root
 mkdir -p config data/web/assets/themes/_branding branding swag
+
+# For OpenCloud's first start, which deletes it (compose.yaml)
+if [ -n "$first_start" ]; then
+    (umask 077; printf '%s' "$(conf OC_ADMIN_PASSWORD)" > config/.admin-password)
+fi
 
 docker network inspect "$(conf SWAG_NETWORK)" > /dev/null 2>&1 ||
     echo "Warning: no Docker network '$(conf SWAG_NETWORK)' (SWAG_NETWORK); docker network ls lists them" >&2
@@ -74,6 +86,8 @@ Next:
 1. Copy $site to SWAG's config/nginx/proxy-confs/ and restart SWAG.
 2. docker compose up -d
 3. Open https://$(conf OC_DOMAIN) and sign in as admin with OC_ADMIN_PASSWORD.
+   Keep the password somewhere safe (a password manager), then remove it from
+   .env: nothing reads it there after the first start.
 EOF
 if with_authelia; then
     cat <<EOF

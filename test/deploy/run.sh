@@ -136,6 +136,8 @@ echo "== With Authelia ($DOMAIN)"
 cd "$WORK/a"
 check "docker compose up -d" "docker compose up -d"
 check "OpenCloud and Authelia answer through SWAG" 'wait_up "$DOMAIN" yes'
+check "the admin password isn't in OpenCloud's environment, and its one-time file is gone" \
+    '! docker inspect dtest-opencloud --format "{{json .Config.Env}}" | grep -qF "$ADMIN_PASSWORD" && [ ! -e config/.admin-password ]'
 check "OpenCloud's sign-in configuration is Authelia's" \
     'curl_ "https://$DOMAIN/.well-known/openid-configuration" | grep -q "\"issuer\":\"https://$DOMAIN/authelia\""'
 check "Authelia logs the client's address, not one the client sent (X-Forwarded-For)" \
@@ -203,6 +205,7 @@ check "docker compose up -d" "docker compose up -d"
 check "OpenCloud answers through SWAG" 'wait_up "$DOMAIN2" no'
 check "no Authelia container; OpenCloud runs its own sign-in (idp)" \
     '! docker compose ps --services | grep -q authelia && docker compose exec -T opencloud opencloud list | grep -q " idp "'
+check "admin signs in with the password from the first start (200)" '[ "$(logon "$DOMAIN2" admin "$ADMIN_PASSWORD")" = 200 ]'
 check "the web gets no password link (config.json)" '! curl_ "https://$DOMAIN2/config.json" | grep -q accountEditLink'
 check "users.sh add carol" 'echo Carol-pass1 | ./users.sh add carol --email carol@deploy.test'
 check "carol signs in on OpenCloud's own sign-in (200)" '[ "$(logon "$DOMAIN2" carol Carol-pass1)" = 200 ]'
