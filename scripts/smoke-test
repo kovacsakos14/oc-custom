@@ -53,6 +53,7 @@ echo "ok  user types"
 
 roles="$(curl -fsk -u admin:smoke-test "$url/graph/v1beta1/roleManagement/permissions/roleDefinitions")" || fail "Graph's share roles don't answer"
 grep -q '"id":"a61a37ad-42f2-46f6-a047-fe1906b525e2"' <<<"$roles" || fail "the share role \"Can't delete\" isn't offered"
+grep -Eq '"a61a37ad-42f2-46f6-a047-fe1906b525e2":\{[^}]*"iconName":"folder-shield-2"' <<<"$theme" || fail "the share role \"Can't delete\" has no icon in theme.json"
 echo "ok  share role"
 
 caps="$(curl -fsk -u admin:smoke-test "$url/ocs/v1.php/cloud/capabilities?format=json")" || fail "no capabilities"

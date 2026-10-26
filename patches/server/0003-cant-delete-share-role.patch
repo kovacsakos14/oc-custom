@@ -120,3 +120,18 @@ index 00000000..532db625
 +		t.Errorf("Can upload's permissions map to %v, want %s", r.GetId(), UnifiedRoleEditorLiteID)
 +	}
 +}
+diff --git a/services/web/assets/themes/opencloud/theme.json b/services/web/assets/themes/opencloud/theme.json
+index 1afd95d5..362597da 100644
+--- a/services/web/assets/themes/opencloud/theme.json
++++ b/services/web/assets/themes/opencloud/theme.json
+@@ -38,6 +38,10 @@
+         "label": "UnifiedRoleUploader",
+         "iconName": "upload"
+       },
++      "a61a37ad-42f2-46f6-a047-fe1906b525e2": {
++        "label": "UnifiedRoleCantDelete",
++        "iconName": "folder-shield-2"
++      },
+       "aa97fe03-7980-45ac-9e50-b325749fd7e6": {
+         "label": "UnifiedRoleSecureView",
+         "iconName": "shield"
