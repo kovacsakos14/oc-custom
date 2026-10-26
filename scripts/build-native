@@ -31,6 +31,7 @@ run() { # image, workdir (under upstream/), command
 
 "$repo/scripts/fetch"
 "$repo/scripts/apply"
+"$repo/scripts/check-upstream"
 
 # 1. The patched web, as upstream packages it (Makefile.release: build + copy-config),
 # kept in out/web-dist. Skipped when that was built from the same version and

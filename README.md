@@ -202,6 +202,7 @@ Builds are tested in a separate OpenCloud test environment (Docker Compose, not 
 - `patches/server`, `patches/reva`, `patches/web`: the changes, as plain diffs. No two patches touch the same file.
 - `scripts/fetch`: clone upstream at those versions into `upstream/` (gitignored).
 - `scripts/apply`: apply the patches.
+- `scripts/check-upstream`: check that `upstream/` holds exactly the patches, nothing older or extra (`build-native` runs it; `OC_CUSTOM_ALLOW_DIRTY=1` makes extra changes a warning).
 - `scripts/refresh-patches`: rewrite the patches from `upstream/`.
 - `scripts/compat`: check that the patches apply to other versions.
 - `scripts/build-native`, `Dockerfile`: the build.
