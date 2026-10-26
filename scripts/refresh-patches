@@ -13,7 +13,7 @@ for part in server reva web; do
         [ -e "$p" ] || continue
         mapfile -t files < <(sed -n 's|^diff --git a/\(.*\) b/.*|\1|p' "$p")
         # New files (in a patch, not yet tracked upstream) need intent-to-add to show in git diff
-        git -C "$dir" add -N -- "${files[@]}"
+        git -C "$dir" add -f -N -- "${files[@]}"
         git -C "$dir" diff -- "${files[@]}" > "$p.new"
         if [ ! -s "$p.new" ]; then
             rm "$p.new"
