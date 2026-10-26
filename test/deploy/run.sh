@@ -101,8 +101,19 @@ wait_up() { # domain, with Authelia
     return 1
 }
 
-admin_token() { # a short-lived app token for admin, as users.sh makes it
-    docker compose exec -T opencloud opencloud auth-app create --user-name admin --expiration 10m | sed -n 's/^ *token: //p'
+user_token() { # user: a short-lived app token, as users.sh makes admin's
+    docker compose exec -T opencloud opencloud auth-app create --user-name "$1" --expiration 10m | sed -n 's/^ *token: //p'
+}
+admin_token() { user_token admin; }
+YQ_IMAGE="$(sed -n 's/^YQ_IMAGE=//p' "$repo/deploy/lib.sh")"
+yq_() { docker run --rm -i "$YQ_IMAGE" -p json "$@"; }
+personal_state() { # drive id: its state as the admin sees it (trashed when disabled)
+    curl_ -u "admin:$(admin_token)" "https://$DOMAIN/graph/v1.0/drives?%24filter=driveType%20eq%20%27personal%27" |
+        Y_ID="$1" yq_ '.value[] | select(.id == strenv(Y_ID)) | (.root.deleted.state // "enabled")'
+}
+link_opens() { # public link token: its folder opens with the link's password (207)
+    [ "$(curl_ -u "public:Link-Pass-1234!" -X PROPFIND -H "Depth: 0" -o /dev/null -w "%{http_code}" \
+        "https://$DOMAIN/dav/public-files/$1")" = 207 ]
 }
 
 logon() { # domain, user, password: the built-in sign-in's answer (200 ok, 204 refused)
@@ -182,6 +193,24 @@ step "admin: 2FA registered at the first sign-in, removed and registered again o
     ADMIN_PASSWORD="$ADMIN_PASSWORD" ADMIN_EMAIL=admin@deploy.test
 check "users.sh reset-2fa admin" './users.sh reset-2fa admin'
 step "admin is asked to register 2FA again" admin-reset.js ADMIN_PASSWORD="$ADMIN_PASSWORD"
+# Changing a User to a type without a personal space disables it, with the links from it
+check "alice (User) shares a folder in her personal space by a public link" \
+    'A="alice:$(user_token alice)"
+     space="$(curl_ -u "$A" "https://$DOMAIN/graph/v1.0/me/drives?%24filter=driveType%20eq%20%27personal%27" | yq_ ".value[0].id")"
+     curl_ -u "$A" -X MKCOL "https://$DOMAIN/dav/spaces/$space/linked" &&
+     item="$(curl_ -u "$A" -X PROPFIND -H "Depth: 0" "https://$DOMAIN/dav/spaces/$space/linked" \
+        -d "<d:propfind xmlns:d=\"DAV:\" xmlns:oc=\"http://owncloud.org/ns\"><d:prop><oc:fileid/></d:prop></d:propfind>" |
+        sed -n "s|.*<oc:fileid>\([^<]*\)</oc:fileid>.*|\1|p")" &&
+     link="$(curl_ -u "$A" -H "Content-Type: application/json" -d "{\"type\":\"view\",\"password\":\"Link-Pass-1234!\"}" \
+        "https://$DOMAIN/graph/v1beta1/drives/${space//\$/%24}/items/${item//\$/%24}/createLink" | yq_ ".link.webUrl")" &&
+     link="${link##*/}" && [ -n "$link" ] && link_opens "$link"'
+check "users.sh role alice client disables her personal space; the link stops working" \
+    './users.sh role alice client < /dev/null && [ "$(personal_state "$space")" = trashed ] && ! link_opens "$link"'
+check "alice can't enable her personal space herself (patches/reva/0002)" \
+    '[ "$(curl_ -u "$A" -X PATCH -H "Restore: T" -H "Content-Type: application/json" -d "{}" -o /dev/null -w "%{http_code}" \
+        "https://$DOMAIN/graph/v1.0/drives/${space//\$/%24}")" -ge 400 ] && [ "$(personal_state "$space")" = trashed ]'
+check "users.sh role alice user enables it again; the link works again" \
+    './users.sh role alice user < /dev/null && [ "$(personal_state "$space")" = enabled ] && link_opens "$link"'
 admins() { grep -A8 "^  $1:" authelia/users/users_database.yml | grep -q -- '- admins'; }
 check "users.sh role alice admin puts her in admins" './users.sh role alice admin && admins alice'
 check "users.sh role alice user takes her out" './users.sh role alice user && ! admins alice'

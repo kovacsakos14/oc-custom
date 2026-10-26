@@ -23,7 +23,10 @@ Usage: ./users.sh COMMAND [USER] [OPTIONS]
                                 (--random: makes one up and shows it)
   passwd USER [--random]        Sets a new password
   role USER ROLE                Changes the role: user, admin (2FA with Authelia),
-                                light, client or employee
+                                light, client or employee. To light, client or
+                                employee: disables the user's personal space
+                                (files kept; shares and links from it stop);
+                                back to user or admin: enables it again
   email USER ADDRESS            Changes the e-mail address
   disable USER, enable USER     Blocks or allows signing in
   delete USER                   Deletes the user (their files too)
@@ -57,14 +60,15 @@ token() {
 # cfg_quote: a value for curl's config file (in double quotes)
 cfg_quote() { printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'; }
 
-# api METHOD PATH [JSON]: the response body on stdout; fails on HTTP >= 300.
+# api METHOD PATH [JSON [HEADER]]: the response body on stdout; fails on HTTP >= 300.
 # The token and the body go through curl's config on stdin, not its command line.
 api() {
-    local method="$1" path="$2" body="${3-}" out code
+    local method="$1" path="$2" body="${3-}" header="${4-}" out code
     [ -n "$ADMIN_TOKEN" ] || die "No app token (call token first)"
     out="$({
         printf 'user = "admin:%s"\n' "$(cfg_quote "$ADMIN_TOKEN")"
         [ -z "$body" ] || printf 'data-raw = "%s"\n' "$(cfg_quote "$body")"
+        [ -z "$header" ] || printf 'header = "%s"\n' "$(cfg_quote "$header")"
     } | docker compose exec -T opencloud curl -sS -K - -X "$method" -H 'Content-Type: application/json' \
         -w '\n%{http_code}' "http://127.0.0.1:9200$path")"
     code="${out##*$'\n'}"
@@ -91,6 +95,14 @@ set_role_id() { # USER_ID ROLE_ID
     export Y_ID="$1" Y_APP="$app" Y_ROLE="$2"
     api POST "/graph/v1.0/users/$id/appRoleAssignments" \
         "$(echo '{}' | json '.principalId = strenv(Y_ID) | .resourceId = strenv(Y_APP) | .appRoleId = strenv(Y_ROLE)')" > /dev/null
+}
+
+# personal_drive USER_ID: "DRIVE_ID STATE" of the user's personal space (STATE
+# is trashed when it's disabled), nothing when they have none
+personal_drive() {
+    export Y_ID="$1"
+    api GET '/graph/v1.0/drives?$filter=driveType%20eq%20%27personal%27' |
+        yq -p json '.value[] | select(.owner.user.id == strenv(Y_ID)) | .id + " " + (.root.deleted.state // "")'
 }
 
 role_id() {
@@ -256,12 +268,31 @@ cmd_passwd() {
 }
 
 cmd_role() {
-    local user="${1-}" role="${2-}" rid
+    local user="${1-}" role="${2-}" rid id drive="" state="" with_space answer
     [ -n "$user" ] && [ -n "$role" ] || die "role USER user|admin|light|client|employee"
     valid_name "$user"
     rid="$(role_id "$role")"
-    set_role "$user" "$rid"
+    id="$(user_id "$user")"
+    read -r drive state <<< "$(personal_drive "$id")" || true
+    # These types have no personal space. One the user already has is disabled,
+    # not deleted: the files stay and an admin can enable it again (the owner
+    # can't, patches/reva/0002), and shares and links from it stop working.
+    case "$role" in client|employee|light) with_space="" ;; *) with_space=1 ;; esac
+    if [ -z "$with_space" ] && [ -n "$drive" ] && [ "$state" != trashed ] && [ -t 0 ]; then
+        read -rp "$user has a personal space. As $role they don't: it gets disabled (files kept, an admin can enable it again), and their shares and links from it stop working. Continue? [y/N] " answer
+        case "$answer" in y|Y) ;; *) die "Nothing changed" ;; esac
+    fi
+    set_role_id "$id" "$rid"
     echo "OpenCloud: $user is now $role"
+    if [ -z "$with_space" ] && [ -n "$drive" ] && [ "$state" != trashed ]; then
+        (api DELETE "/graph/v1.0/drives/${drive//\$/%24}" > /dev/null) ||
+            die "$user is $role now, but their personal space is still enabled: run the same command again"
+        echo "OpenCloud: disabled $user's personal space (their shares and links from it stop working)"
+    elif [ -n "$with_space" ] && [ "$state" = trashed ]; then
+        (api PATCH "/graph/v1.0/drives/${drive//\$/%24}" '{}' 'Restore: T' > /dev/null) ||
+            die "$user is $role now, but their personal space is still disabled: run the same command again"
+        echo "OpenCloud: enabled $user's personal space again"
+    fi
     if with_authelia && has_user "$user"; then
         if [ "$role" = admin ]; then
             edit_user "$user" '.groups = ((.groups // []) + ["admins"] | unique)'
