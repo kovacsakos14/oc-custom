@@ -55,6 +55,8 @@ Context for working on this repo. User-facing docs are in README.md; this file h
 - **`curl … | grep -q` under `set -o pipefail` fails on large responses:** grep exits early and curl's broken pipe fails the pipeline. Read responses into a variable first (`scripts/smoke-test`).
 - **Puppeteer inside the OpenCloud web app:** `page.goto` never settles, because the app keeps a notifications connection open. Navigate in-app (click links), as `test/browser.js` does. The context menu is `#oc-files-context-menu`; actions have `oc-files-actions-<name>-trigger` classes.
 - **`IDP_ASSET_PATH`** serves the IDP from disk, layered over the built-in copy. With it, the patched sign-in page can be tested on the official image without a server build. That's how patch 5 was checked.
+- **Backing up OpenCloud's data folder:** the storage keeps file names and ids in extended attributes. A plain `tar` loses them, and a restored storage fails with "user.oc.name: no data available". Use `tar --xattrs --xattrs-include='*'`, or rebuild the test environment instead.
+- **User types stay in the settings store:** every bundle OpenCloud has written (at each start, from its defaults or `SETTINGS_BUNDLES_PATH`) is kept and listed, even after it's gone from the defaults; upstream's are rewritten at each start. Removing one of ours means deleting it from the store.
 - **Don't write to the test environment's test data as a test user;** checks that change files belong to its own tests. See `CLAUDE.local.md`.
 
 ## What was verified (7.2.4-1, test env)
