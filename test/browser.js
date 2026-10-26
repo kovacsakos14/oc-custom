@@ -4,7 +4,10 @@
 // me" offers. Screenshots and result.json go to /out.
 // Run by test/browser in zenika/alpine-chrome:with-puppeteer.
 //   USERS="admin:secret client1:secret"
-//   NEW=1                     also list the "New" menu in Personal
+//   NEW=1                     also list the "New" menu in Personal (and in ACTIONS' shares)
+//   OPEN="client1:Client folder/readme.txt"
+//                             also open the file in its default app: editable or not
+//   PREFS=1                   also list the notification sections in Preferences
 //   SEARCH="alice:dave"       also type "dave" into the share dialog of alice's
 //                             first personal item and list who it offers
 const fs = require('fs')
@@ -123,6 +126,54 @@ async function main() {
           '#oc-files-context-menu [class*="oc-files-actions-"][class*="-trigger"]',
           (els) => els.map((e) => [...e.classList].find((c) => c.endsWith('-trigger')).replace(/^oc-files-actions-|-trigger$/g, ''))
         )
+        await page.keyboard.press('Escape')
+        await new Promise((r) => setTimeout(r, 500))
+        // NEW=1: the "New" menu inside the share too
+        if (process.env.NEW) {
+          await page.locator('#web-nav-sidebar button, .files-app-bar button').filter((b) => /^(New|Neu)$/.test(b.innerText.trim())).click()
+          await page.waitForSelector('#create-or-upload-drop', { visible: true, timeout: 10000 })
+          r.newMenuInShare = r.newMenuInShare || {}
+          r.newMenuInShare[share] = await page.$$eval('#create-or-upload-drop li', (els) =>
+            els.map((e) => e.innerText.split('\n')[0].trim()).filter(Boolean))
+          await page.keyboard.press('Escape')
+          await new Promise((res) => setTimeout(res, 500))
+        }
+      }
+      // OPEN="client1:Client folder/readme.txt": open the file from the share in its default
+      // app and record whether it's editable (nothing is typed or saved)
+      for (const spec of (process.env.OPEN || '').split(' ').filter((s) => s.startsWith(user.name + ':'))) {
+        const [share, file] = spec.slice(user.name.length + 1).split('/')
+        if (!(await page.evaluate(() => location.pathname.startsWith('/files/shares/with-me')))) {
+          await page.locator('#web-nav-sidebar a[href*="/files/shares"]').click()
+          await page.waitForFunction(() => location.pathname.startsWith('/files/shares/with-me'))
+        }
+        await page.locator(`[data-test-resource-name="${share}"]`).click()
+        await page.locator(`[data-test-resource-name="${file}"]`).click()
+        await page.waitForFunction(() => !location.pathname.startsWith('/files/'), { timeout: 30000 })
+        await new Promise((res) => setTimeout(res, 5000))
+        await page.screenshot({ path: `/out/${user.name}-open.png` })
+        r.opened = r.opened || {}
+        r.opened[`${share}/${file}`] = {
+          app: await page.evaluate(() => location.pathname.split('/')[1]),
+          editable: !!(await page.$('[contenteditable="true"]')),
+          save: !!(await page.$('#app-save-action')),
+        }
+        await page.goBack()
+        await page.waitForFunction(() => location.pathname.startsWith('/files/'), { timeout: 30000 })
+        await new Promise((res) => setTimeout(res, 2000))
+      }
+      // PREFS=1: the notification sections on the Preferences page
+      if (process.env.PREFS) {
+        await page.locator('#_userMenuButton').click()
+        await page.locator('#oc-topbar-account-manage').click()
+        await page.locator('a[href*="/account/preferences"]').click()
+        await page.waitForFunction(() => location.pathname.includes('/account/preferences'), { timeout: 20000 })
+        await new Promise((res) => setTimeout(res, 4000))
+        await page.screenshot({ path: `/out/${user.name}-preferences.png`, fullPage: true })
+        r.preferences = {
+          headings: await page.$$eval('main h2', (els) => els.map((e) => e.innerText.trim())),
+          mailRow: !!(await page.$('[data-testid="notification-mails"]')),
+        }
       }
     } finally {
       await browser.close()
