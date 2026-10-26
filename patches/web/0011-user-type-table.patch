@@ -1,0 +1,154 @@
+diff --git a/packages/web-pkg/src/composables/index.ts b/packages/web-pkg/src/composables/index.ts
+index 5e3617d..671a5db 100644
+--- a/packages/web-pkg/src/composables/index.ts
++++ b/packages/web-pkg/src/composables/index.ts
+@@ -37,3 +37,4 @@ export * from './upload'
+ export * from './viewMode'
+ export * from './webWorkers'
+ export * from './avatars'
++export * from './ocCustom'
+diff --git a/packages/web-pkg/src/composables/ocCustom/index.ts b/packages/web-pkg/src/composables/ocCustom/index.ts
+new file mode 100644
+index 0000000..57e8fe6
+--- /dev/null
++++ b/packages/web-pkg/src/composables/ocCustom/index.ts
+@@ -0,0 +1 @@
++export * from './useOcCustomFeatures'
+diff --git a/packages/web-pkg/src/composables/ocCustom/useOcCustomFeatures.ts b/packages/web-pkg/src/composables/ocCustom/useOcCustomFeatures.ts
+new file mode 100644
+index 0000000..5d0ba43
+--- /dev/null
++++ b/packages/web-pkg/src/composables/ocCustom/useOcCustomFeatures.ts
+@@ -0,0 +1,51 @@
++import { unref } from 'vue'
++import { User } from '@opencloud-eu/web-client/graph/generated'
++import { useUserStore } from '../piniaStores'
++
++// oc-custom: which of oc-custom's web changes apply to which user type. Upstream's
++// types (Admin, Space Admin, User, User Light) get upstream's behaviour. Changing
++// who gets what means editing this table only.
++
++/** oc-custom's user types (settings bundle ids, see the server's defaults_custom.go) */
++export const ocCustomUserTypes = {
++  client: '38f0649f-b600-4188-b138-fbd2c773cc43',
++  employee: '12047bc6-9aa3-49f6-8d78-e64b3065cd99'
++} as const
++
++const { client, employee } = ocCustomUserTypes
++
++export const ocCustomFeatures = {
++  /** a drive that doesn't resolve (no personal space) leads to "Shared with me", not Spaces */
++  sharesLanding: [client, employee],
++  /** no Spaces entry in the files menu */
++  hideSpaces: [client, employee],
++  /** shares can't be hidden, and "Shared with me" lists them all */
++  noHideShares: [client, employee],
++  /** no "Copy permanent link" */
++  noPermanentLink: [client, employee],
++  /** the Text Editor isn't in the app menu or the "New" menu (text files still open in it) */
++  hideTextEditor: [client]
++} satisfies Record<string, readonly string[]>
++
++export type OcCustomFeature = keyof typeof ocCustomFeatures
++
++/** the id of the user's type, or undefined before the user is known */
++export function userTypeId(user: User | undefined): string | undefined {
++  // the web keeps the whole settings bundle here (userManager's FIXME), Graph keeps appRoleId
++  const { appRoleId, id } = (user?.appRoleAssignments?.[0] || {}) as Record<string, unknown>
++  return [appRoleId, id].find((value): value is string => typeof value === 'string')
++}
++
++export function hasOcCustomFeature(feature: OcCustomFeature, user: User | undefined): boolean {
++  const id = userTypeId(user)
++  return !!id && (ocCustomFeatures[feature] as readonly string[]).includes(id)
++}
++
++export function useOcCustomFeatures() {
++  const userStore = useUserStore()
++  /** whether the feature applies to the signed-in user; reactive when used in a computed */
++  function has(feature: OcCustomFeature) {
++    return hasOcCustomFeature(feature, unref(userStore.user))
++  }
++  return { has }
++}
+diff --git a/packages/web-pkg/tests/unit/composables/ocCustom/useOcCustomFeatures.spec.ts b/packages/web-pkg/tests/unit/composables/ocCustom/useOcCustomFeatures.spec.ts
+new file mode 100644
+index 0000000..e161f7e
+--- /dev/null
++++ b/packages/web-pkg/tests/unit/composables/ocCustom/useOcCustomFeatures.spec.ts
+@@ -0,0 +1,75 @@
++import { mock } from 'vitest-mock-extended'
++import { User } from '@opencloud-eu/web-client/graph/generated'
++import { getComposableWrapper } from '@opencloud-eu/web-test-helpers'
++import {
++  hasOcCustomFeature,
++  ocCustomFeatures,
++  ocCustomUserTypes,
++  OcCustomFeature,
++  useOcCustomFeatures,
++  userTypeId
++} from '../../../../src/composables/ocCustom'
++
++// oc-custom: the user-type table of oc-custom's web changes
++
++const userLightId = '38071a68-456a-4553-846a-fa67bf5596cc'
++const userId = 'd7beeea8-8ff4-406b-8fb6-ab2dd81e6b11'
++
++// as the web stores it: the whole settings bundle (userManager's FIXME)
++function userWithBundle(id: string) {
++  return mock<User>({ appRoleAssignments: [{ id } as any] })
++}
++
++describe('useOcCustomFeatures', () => {
++  describe('userTypeId', () => {
++    it('reads the bundle the web stores', () => {
++      expect(userTypeId(userWithBundle(ocCustomUserTypes.client))).toBe(ocCustomUserTypes.client)
++    })
++    it("reads Graph's appRoleId too", () => {
++      const user = mock<User>({ appRoleAssignments: [{ appRoleId: userId } as any] })
++      expect(userTypeId(user)).toBe(userId)
++    })
++    it('is undefined before the user is known', () => {
++      expect(userTypeId(undefined)).toBeUndefined()
++      expect(userTypeId(mock<User>({ appRoleAssignments: [] }))).toBeUndefined()
++    })
++  })
++
++  describe('hasOcCustomFeature', () => {
++    const features = Object.keys(ocCustomFeatures) as OcCustomFeature[]
++
++    it.each(features)('applies %s to Clients', (feature) => {
++      expect(hasOcCustomFeature(feature, userWithBundle(ocCustomUserTypes.client))).toBe(true)
++    })
++    it.each(features.filter((f) => f !== 'hideTextEditor'))(
++      'applies %s to Employees',
++      (feature) => {
++        expect(hasOcCustomFeature(feature, userWithBundle(ocCustomUserTypes.employee))).toBe(true)
++      }
++    )
++    it('keeps the Text Editor for Employees', () => {
++      expect(hasOcCustomFeature('hideTextEditor', userWithBundle(ocCustomUserTypes.employee))).toBe(
++        false
++      )
++    })
++    it.each(features)("doesn't apply %s to upstream's types", (feature) => {
++      expect(hasOcCustomFeature(feature, userWithBundle(userId))).toBe(false)
++      expect(hasOcCustomFeature(feature, userWithBundle(userLightId))).toBe(false)
++      expect(hasOcCustomFeature(feature, undefined)).toBe(false)
++    })
++  })
++
++  it('answers for the signed-in user', () => {
++    getComposableWrapper(
++      () => {
++        const { has } = useOcCustomFeatures()
++        expect(has('hideTextEditor')).toBe(true)
++      },
++      {
++        pluginOptions: {
++          piniaOptions: { userState: { user: userWithBundle(ocCustomUserTypes.client) } }
++        }
++      }
++    )
++  })
++})
