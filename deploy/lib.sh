@@ -31,15 +31,48 @@ hash_password() {
         sh -c 'authelia crypto hash generate argon2 --password "$(cat)"' | sed -n 's/^Digest: //p'
 }
 
-# write_users: stdin becomes Authelia's user file, after a check; written
-# whole and renamed into place, because Authelia stops on a broken file
-write_users() {
-    tmp="$USERS_FILE.new.$$"
-    cat > "$tmp"
-    if ! yq -e '(.users | type == "!!map") and ([.users[] | select(.password == null or .displayname == null)] | length == 0)' < "$tmp" > /dev/null; then
-        rm -f "$tmp"
-        die "Refusing to write $USERS_FILE: the result isn't a valid user list"
+USERS_LOCK=authelia/.users.lock
+USERS_TMP=""
+trap '[ -z "$USERS_TMP" ] || rm -f "$USERS_TMP"' EXIT
+
+# lock_users: one users.sh at a time changes the user file, until it exits
+# (the lock lives outside users/, the folder Authelia watches)
+lock_users() {
+    [ -z "${USERS_LOCKED-}" ] || return 0
+    if command -v flock > /dev/null; then
+        exec 9> "$USERS_LOCK"
+        flock -w 60 9 || die "Another users.sh is changing $USERS_FILE; try again"
+    else
+        echo "Warning: no flock on this host, so two users.sh at the same time could undo each other's changes" >&2
     fi
-    chmod 600 "$tmp"
-    mv "$tmp" "$USERS_FILE"
+    USERS_LOCKED=1
+}
+
+users_sum() { cksum < "$USERS_FILE" 2> /dev/null || echo none; }
+
+# update_users EXPRESSION: applies a yq expression to Authelia's user file
+# (users: {} when there's none yet). The result is checked and written whole,
+# then renamed into place, because Authelia stops on a broken file. Authelia
+# itself rewrites the file when a user changes their password; if that
+# happens meanwhile, the change is made again on top of it.
+update_users() {
+    local base
+    lock_users
+    USERS_TMP="$USERS_FILE.new.$$"
+    for _ in 1 2 3; do
+        base="$(users_sum)"
+        # umask: the hashes are never readable by others, not even briefly
+        ( umask 077
+          { if [ -f "$USERS_FILE" ]; then cat "$USERS_FILE"; else printf 'users: {}\n'; fi; } | yq "$1" > "$USERS_TMP" )
+        yq -e '(.users | type == "!!map") and ([.users[] | select(.password == null or .displayname == null)] | length == 0)' < "$USERS_TMP" > /dev/null ||
+            die "Refusing to write $USERS_FILE: the result isn't a valid user list"
+        if [ "$(users_sum)" = "$base" ]; then
+            chmod 600 "$USERS_TMP"
+            mv "$USERS_TMP" "$USERS_FILE"
+            USERS_TMP=""
+            return 0
+        fi
+        echo "$USERS_FILE changed meanwhile (Authelia?); making the change again" >&2
+    done
+    die "$USERS_FILE keeps changing; nothing written, run again"
 }

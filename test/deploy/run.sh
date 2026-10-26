@@ -157,6 +157,10 @@ check "impersonation is off: admin's token can't make one for alice" \
         "https://$DOMAIN/auth-app/tokens?expiry=10m&userName=alice")" -ge 400 ]'
 check "users.sh add bob as User Light (--random)" './users.sh add bob --role light --email bob@deploy.test --random < /dev/null'
 check "users.sh disable bob" './users.sh disable bob'
+check "two users.sh add at the same time both land in Authelia's file" \
+    'echo Gina-pass1 | ./users.sh add gina & p=$!; echo Hank-pass1 | ./users.sh add hank && wait $p &&
+     grep -q "^  gina:" authelia/users/users_database.yml && grep -q "^  hank:" authelia/users/users_database.yml &&
+     ./users.sh delete gina < /dev/null && ./users.sh delete hank < /dev/null'
 check "users.sh add erin as Client (--random)" './users.sh add erin --role client --email erin@deploy.test --random < /dev/null'
 check "users.sh add fred as Employee (--random)" './users.sh add fred --role employee --email fred@deploy.test --random < /dev/null'
 list="$(./users.sh list)"

@@ -111,7 +111,7 @@ users_yaml() { [ -f "$USERS_FILE" ] || die "No $USERS_FILE: run ./setup.sh"; cat
 # edit_user USER EXPRESSION: applies a yq expression to .users[USER]
 edit_user() {
     export Y_USER="$1"
-    users_yaml | yq ".users[strenv(Y_USER)] |= ($2)" | write_users
+    update_users ".users[strenv(Y_USER)] |= ($2)"
 }
 
 has_user() {
@@ -214,9 +214,9 @@ cmd_add() {
     echo "OpenCloud: created $user"
     if with_authelia; then
         export Y_HASH="$hash" Y_GROUP="$([ "$role" = admin ] && echo admins || true)"
-        users_yaml | yq '.users[strenv(Y_USER)] = {"displayname": strenv(Y_NAME), "email": strenv(Y_EMAIL),
+        update_users '.users[strenv(Y_USER)] = {"displayname": strenv(Y_NAME), "email": strenv(Y_EMAIL),
             "password": strenv(Y_HASH), "disabled": false,
-            "groups": ([strenv(Y_GROUP)] | map(select(. != "")))}' | write_users
+            "groups": ([strenv(Y_GROUP)] | map(select(. != "")))}'
         echo "Authelia: added $user$([ "$role" = admin ] && echo ' (admins: 2FA required)' || true)"
     fi
 }
@@ -241,9 +241,9 @@ cmd_passwd() {
             export Y_USER="$user" Y_NAME="$(yq -p json '.displayName // ""' <<< "$u")" \
                 Y_EMAIL="$(yq -p json '.mail // ""' <<< "$u")" \
                 Y_GROUP="$([ "$(yq -p json '.appRoleAssignments[0].appRoleId // ""' <<< "$u")" = "$ROLE_ADMIN" ] && echo admins || true)"
-            users_yaml | yq '.users[strenv(Y_USER)] = {"displayname": strenv(Y_NAME), "email": strenv(Y_EMAIL),
+            update_users '.users[strenv(Y_USER)] = {"displayname": strenv(Y_NAME), "email": strenv(Y_EMAIL),
                 "password": strenv(Y_HASH), "disabled": false,
-                "groups": ([strenv(Y_GROUP)] | map(select(. != "")))}' | write_users
+                "groups": ([strenv(Y_GROUP)] | map(select(. != "")))}'
             echo "Authelia: added $user with a password$([ -n "$Y_GROUP" ] && echo ' (admins: 2FA required)' || true)"
         fi
     else
@@ -303,7 +303,7 @@ cmd_delete() {
     api DELETE "/graph/v1.0/users/$(user_id "$user")" > /dev/null
     echo "OpenCloud: deleted $user"
     if with_authelia && has_user "$user"; then
-        users_yaml | yq 'del(.users[strenv(Y_USER)])' | write_users
+        update_users 'del(.users[strenv(Y_USER)])'
         (reset_2fa "$user") > /dev/null 2>&1 || true
         echo "Authelia: removed $user"
     fi

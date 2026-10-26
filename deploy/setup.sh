@@ -62,8 +62,8 @@ if with_authelia; then
         Y_HASH="$(hash_password "$(conf OC_ADMIN_PASSWORD)")"
         export Y_HASH
         [ -n "$Y_HASH" ] || die "Couldn't hash the admin's password"
-        printf 'users: {}\n' | yq '.users[strenv(Y_USER)] = {"displayname": strenv(Y_NAME),
-            "email": strenv(Y_EMAIL), "password": strenv(Y_HASH), "disabled": false, "groups": ["admins"]}' | write_users
+        update_users '.users[strenv(Y_USER)] = {"displayname": strenv(Y_NAME),
+            "email": strenv(Y_EMAIL), "password": strenv(Y_HASH), "disabled": false, "groups": ["admins"]}'
         echo "Wrote $USERS_FILE with admin (group admins: 2FA required)"
     fi
 fi
