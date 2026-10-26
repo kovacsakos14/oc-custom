@@ -141,6 +141,9 @@ check "Authelia has no OIDC sign-out endpoint; the web signs out at its /logout 
 check "no Calendar (capability support-radicale off)" \
     'curl_ -u "admin:$(cat .admin-token)" "https://$DOMAIN/ocs/v1.php/cloud/capabilities?format=json" | grep -Eq "\"support-radicale\": ?false"'
 check "users.sh add alice (password on stdin)" 'echo Alice-pass1 | ./users.sh add alice --name "Alice Example" --email alice@deploy.test'
+check "impersonation is off: admin's token can't make one for alice" \
+    '[ "$(curl_ -u "admin:$(cat .admin-token)" -X POST -o /dev/null -w "%{http_code}" \
+        "https://$DOMAIN/auth-app/tokens?expiry=10m&userName=alice")" -ge 400 ]'
 check "users.sh add bob as User Light (--random)" './users.sh add bob --role light --email bob@deploy.test --random < /dev/null'
 check "users.sh disable bob" './users.sh disable bob'
 check "users.sh add erin as Client (--random)" './users.sh add erin --role client --email erin@deploy.test --random < /dev/null'

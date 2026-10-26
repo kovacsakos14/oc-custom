@@ -28,10 +28,12 @@ services:
       # SWAG terminates TLS
       PROXY_TLS: "false"
       PROXY_HTTP_ADDR: 0.0.0.0:9200
-      # App tokens (users.sh, management tools) and impersonation
+      # App tokens (users.sh, management tools)
       OC_ADD_RUN_SERVICES: auth-app
       PROXY_ENABLE_APP_AUTH: "true"
-      AUTH_APP_ENABLE_IMPERSONATION: "true"
+      # Off unless .env turns it on: with it, an admin's app token can make
+      # tokens for any user and so read every user's files
+      AUTH_APP_ENABLE_IMPERSONATION: ${AUTH_APP_ENABLE_IMPERSONATION:-false}
       # OpenCloud's own e-mails (shares)
       NOTIFICATIONS_SMTP_HOST: ${SMTP_HOST}
       NOTIFICATIONS_SMTP_PORT: ${SMTP_PORT}

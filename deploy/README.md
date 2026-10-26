@@ -52,6 +52,7 @@ The desktop and mobile apps connect to `https://<your domain>` as usual. They op
 - **Admins** (`--role admin`) are in Authelia's `admins` group, so they need 2FA. Changing the role with `users.sh role` changes both.
 - With Authelia, OpenCloud's own password for each user is random and unused; passwords are checked by Authelia only.
 - `users.sh` uses an app token for `admin`, created on first use and kept in `.admin-token` (private, valid one year; delete the file to get a new one, and remove the old token under the admin's Settings → App Tokens).
+- Impersonation (an admin's app token making tokens for other users) is off; `AUTH_APP_ENABLE_IMPERSONATION=true` in `.env` turns it on for management tools that need it. `users.sh` doesn't.
 - Users created in OpenCloud's web UI (Admin settings → Users) exist only in OpenCloud. With Authelia they can't sign in until they have an entry in Authelia's file: create them with `users.sh` instead.
 
 **What users see:** Clients and Employees land on "Shared with me"; their menu is Shares and Deleted files, with no Spaces entry. Admins and upstream's types see upstream's web (they land on Personal). Nobody has Calendar in the app menu (the image's default).
