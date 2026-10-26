@@ -1,25 +1,26 @@
 diff --git a/pkg/conversions/role.go b/pkg/conversions/role.go
-index 508b091..21e71ea 100644
+index 508b091..307e10a 100644
 --- a/pkg/conversions/role.go
 +++ b/pkg/conversions/role.go
-@@ -136,6 +136,11 @@ func (r *Role) WebDAVPermissions(isDir, isShared, isMountpoint, isPublic bool) s
+@@ -136,6 +136,12 @@ func (r *Role) WebDAVPermissions(isDir, isShared, isMountpoint, isPublic bool) s
  		if !isDir {
  			fmt.Fprintf(&b, "W")
  		}
-+	} else if !isPublic && r.cS3ResourcePermissions != nil && r.cS3ResourcePermissions.Move {
-+		// oc-custom: roles that may move but not write (e.g. "Can upload") report
-+		// rename/move too, so clients offer what the server already allows.
-+		// Public links keep their behaviour.
++	} else if !isPublic && r.cS3ResourcePermissions != nil && r.cS3ResourcePermissions.Move && r.cS3ResourcePermissions.GetQuota {
++		// oc-custom: our "Can't delete" share role (upstream's "Can upload" plus
++		// GetQuota) may move but not write, and reports rename/move too, so
++		// clients offer what the server allows. Upstream's roles and public
++		// links keep their behaviour.
 +		fmt.Fprintf(&b, "NV")
  	}
  	if isDir && r.ocsPermissions.Contain(PermissionCreate) {
  		fmt.Fprintf(&b, "CK")
 diff --git a/pkg/conversions/role_custom_test.go b/pkg/conversions/role_custom_test.go
 new file mode 100644
-index 0000000..d0bc495
+index 0000000..e5fd65b
 --- /dev/null
 +++ b/pkg/conversions/role_custom_test.go
-@@ -0,0 +1,28 @@
+@@ -0,0 +1,43 @@
 +package conversions
 +
 +// oc-custom: tests for the oc-custom change in WebDAVPermissions, in their own
@@ -31,20 +32,35 @@ index 0000000..d0bc495
 +	"github.com/stretchr/testify/assert"
 +)
 +
-+func TestWebDAVPermissionsMoveWithoutWrite(t *testing.T) {
++// cantDelete is oc-custom's "Can't delete" share role: "Can upload" plus GetQuota
++func cantDelete() *Role {
++	p := NewEditorLiteRole().CS3ResourcePermissions()
++	p.GetQuota = true
++	return RoleFromResourcePermissions(p, false)
++}
++
++func TestWebDAVPermissionsCantDelete(t *testing.T) {
++	// a user share: rename/move, create in folders, no write or delete
++	assert.Equal(t, "SNVCK", cantDelete().WebDAVPermissions(true, true, false, false))
++	assert.Equal(t, "SNV", cantDelete().WebDAVPermissions(false, true, false, false))
++	assert.Equal(t, "NV", cantDelete().WebDAVPermissions(false, false, false, false))
++}
++
++func TestWebDAVPermissionsUpstreamUnchanged(t *testing.T) {
++	// upstream's "Can upload" reports upstream's letters again
 +	editorLite := RoleFromResourcePermissions(NewEditorLiteRole().CS3ResourcePermissions(), false)
 +	assert.Equal(t, RoleEditorLite, editorLite.Name)
-+	// a user share: rename/move, create in folders, no write or delete
-+	assert.Equal(t, "SNVCK", editorLite.WebDAVPermissions(true, true, false, false))
-+	assert.Equal(t, "SNV", editorLite.WebDAVPermissions(false, true, false, false))
-+	// the same role through a public link: unchanged
++	assert.Equal(t, "SCK", editorLite.WebDAVPermissions(true, true, false, false))
++	assert.Equal(t, "S", editorLite.WebDAVPermissions(false, true, false, false))
++	// public links: unchanged
 +	editorLiteLink := RoleFromResourcePermissions(NewEditorLiteRole().CS3ResourcePermissions(), true)
 +	assert.Equal(t, "CK", editorLiteLink.WebDAVPermissions(true, false, false, true))
 +	assert.Equal(t, "", editorLiteLink.WebDAVPermissions(false, false, false, true))
-+
-+	// roles without move are unchanged
++	// roles without move or with write: unchanged
 +	uploader := RoleFromResourcePermissions(NewUploaderRole().CS3ResourcePermissions(), false)
 +	assert.Equal(t, "SCK", uploader.WebDAVPermissions(true, true, false, false))
 +	viewer := RoleFromResourcePermissions(NewViewerRole().CS3ResourcePermissions(), false)
 +	assert.NotContains(t, viewer.WebDAVPermissions(true, true, false, false), "N")
++	editor := RoleFromResourcePermissions(NewEditorRole().CS3ResourcePermissions(), false)
++	assert.Equal(t, "SDNVCK", editor.WebDAVPermissions(true, true, false, false))
 +}
