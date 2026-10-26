@@ -1,5 +1,5 @@
 diff --git a/pkg/storage/utils/decomposedfs/upload.go b/pkg/storage/utils/decomposedfs/upload.go
-index fcb23f8..bef4c58 100644
+index fcb23f8..4971d2e 100644
 --- a/pkg/storage/utils/decomposedfs/upload.go
 +++ b/pkg/storage/utils/decomposedfs/upload.go
 @@ -284,6 +284,11 @@ func (fs *Decomposedfs) InitiateUpload(ctx context.Context, ref *provider.Refere
@@ -7,7 +7,7 @@ index fcb23f8..bef4c58 100644
  	}
  
 +	// oc-custom: "Can't delete" may add files, not replace one (upload_custom.go)
-+	if n.Exists && !mayReplace(rp, n.Blobsize) {
++	if n.Exists && !mayReplace(ctx, rp, n, metadata["checksum"]) {
 +		return nil, errtypes.PermissionDenied(path)
 +	}
 +
@@ -16,21 +16,28 @@ index fcb23f8..bef4c58 100644
  		return nil, errtypes.PreconditionFailed("resource is not a file")
 diff --git a/pkg/storage/utils/decomposedfs/upload_custom.go b/pkg/storage/utils/decomposedfs/upload_custom.go
 new file mode 100644
-index 0000000..cfcc45a
+index 0000000..f8561f4
 --- /dev/null
 +++ b/pkg/storage/utils/decomposedfs/upload_custom.go
-@@ -0,0 +1,26 @@
+@@ -0,0 +1,49 @@
 +package decomposedfs
 +
 +// oc-custom: oc-custom's "Can't delete" share role may upload new files but not
 +// replace one that has content, so nothing on such a share can be lost: an upload
-+// over an existing file (PUT, TUS, COPY onto it) is refused. An empty file may be
-+// replaced, since nothing is lost that way: Windows Explorer and macOS Finder
-+// create a file empty first and then upload its content over it. Upstream's roles
-+// keep their behaviour.
++// over an existing file (PUT, TUS, COPY onto it) is refused. Two uploads lose
++// nothing and are accepted: over an empty file (Windows Explorer and macOS Finder
++// create a file empty first and then upload its content over it), and of the same
++// content (a client retrying an upload whose answer it never got). Upstream's
++// roles keep their behaviour.
 +
 +import (
++	"context"
++	"encoding/hex"
++	"strings"
++
 +	provider "github.com/cs3org/go-cs3apis/cs3/storage/provider/v1beta1"
++	"github.com/opencloud-eu/reva/v2/pkg/storage/utils/decomposedfs/metadata/prefixes"
++	"github.com/opencloud-eu/reva/v2/pkg/storage/utils/decomposedfs/node"
 +)
 +
 +// isCantDelete tells oc-custom's "Can't delete" role (upstream's "Can upload" plus
@@ -42,16 +49,32 @@ index 0000000..cfcc45a
 +		!rp.GetDelete() && !rp.GetRestoreRecycleItem()
 +}
 +
-+// mayReplace tells whether an upload may replace an existing file of the given size
-+func mayReplace(rp *provider.ResourcePermissions, size int64) bool {
-+	return size == 0 || !isCantDelete(rp)
++// mayReplace tells whether an upload may replace the existing file n. checksum is
++// the one the client declared ("sha1 <hex>", as ocdav passes OC-Checksum and TUS
++// Upload-Metadata on), or "".
++func mayReplace(ctx context.Context, rp *provider.ResourcePermissions, n *node.Node, checksum string) bool {
++	return n.Blobsize == 0 || !isCantDelete(rp) || sameContent(ctx, n, checksum)
++}
++
++// sameContent tells whether the declared checksum is the file's own. The upload is
++// checked against the declared checksum when it finishes (FinishUploadDecomposed,
++// before it replaces anything; the posix driver uses the same sessions), so new
++// content can't pass for the old. Only SHA-1 and MD5: content with a given Adler-32
++// is easy to make.
++func sameContent(ctx context.Context, n *node.Node, checksum string) bool {
++	algorithm, sum, ok := strings.Cut(checksum, " ")
++	if !ok || sum == "" || (algorithm != "sha1" && algorithm != "md5") {
++		return false
++	}
++	stored, err := n.Xattr(ctx, prefixes.ChecksumPrefix+algorithm)
++	return err == nil && len(stored) > 0 && hex.EncodeToString(stored) == sum
 +}
 diff --git a/pkg/storage/utils/decomposedfs/upload_custom_test.go b/pkg/storage/utils/decomposedfs/upload_custom_test.go
 new file mode 100644
-index 0000000..40e57b8
+index 0000000..e203b4b
 --- /dev/null
 +++ b/pkg/storage/utils/decomposedfs/upload_custom_test.go
-@@ -0,0 +1,69 @@
+@@ -0,0 +1,100 @@
 +package decomposedfs_test
 +
 +// oc-custom: tests for the oc-custom change in InitiateUpload (upload_custom.go),
@@ -59,11 +82,17 @@ index 0000000..40e57b8
 +// upload_test.go.
 +
 +import (
++	"crypto/md5"
++	"crypto/sha1"
++	"encoding/hex"
++	"hash/adler32"
++
 +	provider "github.com/cs3org/go-cs3apis/cs3/storage/provider/v1beta1"
 +	. "github.com/onsi/ginkgo/v2"
 +	. "github.com/onsi/gomega"
 +	"github.com/opencloud-eu/reva/v2/pkg/conversions"
 +	"github.com/opencloud-eu/reva/v2/pkg/errtypes"
++	"github.com/opencloud-eu/reva/v2/pkg/storage/utils/decomposedfs/metadata/prefixes"
 +	helpers "github.com/opencloud-eu/reva/v2/pkg/storage/utils/decomposedfs/testhelpers"
 +	"github.com/stretchr/testify/mock"
 +)
@@ -82,11 +111,24 @@ index 0000000..40e57b8
 +	ref := func(name string) *provider.Reference {
 +		return &provider.Reference{ResourceId: env.SpaceRootRes, Path: "./dir1/" + name}
 +	}
-+	// upload starts an upload of 10 bytes to name with the given permissions
-+	upload := func(perms *provider.ResourcePermissions, name string) error {
++	// uploadWith starts an upload of 10 bytes to name with the given permissions and
++	// upload metadata
++	uploadWith := func(perms *provider.ResourcePermissions, name string, metadata map[string]string) error {
 +		env.Permissions.On("AssemblePermissions", mock.Anything, mock.Anything).Return(perms, nil)
-+		_, err := env.Fs.InitiateUpload(env.Ctx, ref(name), 10, map[string]string{})
++		_, err := env.Fs.InitiateUpload(env.Ctx, ref(name), 10, metadata)
 +		return err
++	}
++	upload := func(perms *provider.ResourcePermissions, name string) error {
++		return uploadWith(perms, name, map[string]string{})
++	}
++
++	// full.txt's content, and its checksums as the storage keeps them
++	content := []byte("0123456789")
++	sha1Sum, md5Sum := sha1.Sum(content), md5.Sum(content)
++	adler32Sum := adler32.New()
++	_, _ = adler32Sum.Write(content)
++	checksum := func(algorithm string, sum []byte) map[string]string {
++		return map[string]string{"checksum": algorithm + " " + hex.EncodeToString(sum)}
 +	}
 +
 +	BeforeEach(func() {
@@ -95,8 +137,11 @@ index 0000000..40e57b8
 +		Expect(err).ToNot(HaveOccurred())
 +		dir1, err := env.Lookup.NodeFromResource(env.Ctx, &provider.Reference{ResourceId: env.SpaceRootRes, Path: "./dir1"})
 +		Expect(err).ToNot(HaveOccurred())
-+		_, err = env.CreateTestFile("full.txt", "full-blobid", dir1.ID, dir1.SpaceID, 10)
++		full, err := env.CreateTestFile("full.txt", "full-blobid", dir1.ID, dir1.SpaceID, 10)
 +		Expect(err).ToNot(HaveOccurred())
++		Expect(full.SetXattr(env.Ctx, prefixes.ChecksumPrefix+"sha1", sha1Sum[:])).To(Succeed())
++		Expect(full.SetXattr(env.Ctx, prefixes.ChecksumPrefix+"md5", md5Sum[:])).To(Succeed())
++		Expect(full.SetXattr(env.Ctx, prefixes.ChecksumPrefix+"adler32", adler32Sum.Sum(nil))).To(Succeed())
 +		_, err = env.CreateTestFile("empty.txt", "", dir1.ID, dir1.SpaceID, 0)
 +		Expect(err).ToNot(HaveOccurred())
 +	})
@@ -115,6 +160,15 @@ index 0000000..40e57b8
 +	})
 +	It("accepts replacing an empty file (Windows Explorer and macOS Finder create files empty first)", func() {
 +		Expect(upload(cantDelete(), "empty.txt")).To(Succeed())
++	})
++	It("accepts the same content again (a client retrying an upload whose answer it never got)", func() {
++		Expect(uploadWith(cantDelete(), "full.txt", checksum("sha1", sha1Sum[:]))).To(Succeed())
++		Expect(uploadWith(cantDelete(), "full.txt", checksum("md5", md5Sum[:]))).To(Succeed())
++	})
++	It("refuses other content, and doesn't trust Adler-32 (easy to forge)", func() {
++		other := sha1.Sum([]byte("something else"))
++		Expect(uploadWith(cantDelete(), "full.txt", checksum("sha1", other[:]))).To(BeAssignableToTypeOf(errtypes.PermissionDenied("")))
++		Expect(uploadWith(cantDelete(), "full.txt", checksum("adler32", adler32Sum.Sum(nil)))).To(BeAssignableToTypeOf(errtypes.PermissionDenied("")))
 +	})
 +	It("leaves upstream's Can upload and Can edit as they are", func() {
 +		Expect(upload(canUpload(), "full.txt")).To(Succeed())
