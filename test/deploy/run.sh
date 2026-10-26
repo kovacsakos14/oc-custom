@@ -106,7 +106,7 @@ user_token() { # user: a short-lived app token, as users.sh makes admin's
 }
 admin_token() { user_token admin; }
 YQ_IMAGE="$(sed -n 's/^YQ_IMAGE=//p' "$repo/deploy/lib.sh")"
-yq_() { docker run --rm -i "$YQ_IMAGE" -p json "$@"; }
+yq_() { docker run --rm -i -e Y_ID "$YQ_IMAGE" -p json "$@"; } # Y_ID: for strenv() in the container
 personal_state() { # drive id: its state as the admin sees it (trashed when disabled)
     curl_ -u "admin:$(admin_token)" "https://$DOMAIN/graph/v1.0/drives?%24filter=driveType%20eq%20%27personal%27" |
         Y_ID="$1" yq_ '.value[] | select(.id == strenv(Y_ID)) | (.root.deleted.state // "enabled")'
@@ -239,7 +239,9 @@ check "docker compose up -d" "docker compose up -d"
 check "OpenCloud answers through SWAG" 'wait_up "$DOMAIN2" no'
 check "no Authelia container; OpenCloud runs its own sign-in (idp)" \
     '! docker compose ps --services | grep -q authelia && docker compose exec -T opencloud opencloud list | grep -q " idp "'
-check "admin signs in with the password from the first start (200)" '[ "$(logon "$DOMAIN2" admin "$ADMIN_PASSWORD")" = 200 ]'
+# the sign-in service may still be starting right after the first answer
+check "admin signs in with the password from the first start (200)" \
+    'for i in $(seq 15); do [ "$(logon "$DOMAIN2" admin "$ADMIN_PASSWORD")" = 200 ] && break; sleep 2; done; [ "$i" -lt 15 ] || [ "$(logon "$DOMAIN2" admin "$ADMIN_PASSWORD")" = 200 ]'
 check "the web gets no password link (config.json)" '! curl_ "https://$DOMAIN2/config.json" | grep -q accountEditLink'
 check "users.sh add carol" 'echo Carol-pass1 | ./users.sh add carol --email carol@deploy.test'
 check "carol signs in on OpenCloud's own sign-in (200)" '[ "$(logon "$DOMAIN2" carol Carol-pass1)" = 200 ]'
