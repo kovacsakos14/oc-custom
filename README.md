@@ -80,6 +80,7 @@ services:
       # optional: this server's branding (see below)
       - ./branding:/var/lib/opencloud/web/assets/themes/_branding:ro
 ```
+- **A new server** needs `opencloud init` once, as with the official image (without its config OpenCloud exits at once): `docker compose run --rm opencloud init --insecure false --admin-password '…'`, then `docker compose up -d`. `deploy/` does this in the compose file's entrypoint instead.
 - **Update or roll back** by changing the tag, then `docker compose pull && docker compose up -d`.
 - **Tags never change** once published: `7.2.4-1`, `7.2.4-2`, … each mean one build. There's no `latest`, so a server only changes when you change its tag. For extra certainty, pin the digest as well (`…:7.2.4-1@sha256:…`).
 - **The image is public,** so servers pull it without logging in. It holds nothing secret: config and branding stay on each server.
