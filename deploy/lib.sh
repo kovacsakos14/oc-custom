@@ -10,10 +10,29 @@ die() { echo "$*" >&2; exit 1; }
 
 [ -f .env ] || die "No .env here: cp .env.example .env, fill it in, then run ./setup.sh"
 
-# conf KEY: KEY's value in .env (the last one wins; outer quotes removed)
+# conf KEY: KEY's value in .env, read as docker compose reads it: the last
+# line wins, "export " is allowed, a comment after an unquoted value starts at
+# " #", quoted values keep their # and lose their quotes (\" and \\ unescaped
+# in double quotes). ${...} isn't expanded: a value with it is refused, so
+# these scripts never use a different value than compose would.
 conf() {
-    awk -v k="$1" 'index($0, k "=") == 1 { v = substr($0, length(k) + 2) }
-        END { if (v ~ /^".*"$/ || v ~ /^'\''.*'\''$/) v = substr(v, 2, length(v) - 2); print v }' .env
+    local v
+    v="$(awk -v k="$1" '
+        { sub(/^[ \t]*export[ \t]+/, "") }
+        index($0, k "=") == 1 {
+            v = substr($0, length(k) + 2)
+            if (v ~ /^"/) {
+                v = substr(v, 2); sub(/"[ \t]*(#.*)?$/, "", v)
+                gsub(/\\"/, "\"", v); gsub(/\\\\/, "\\", v)
+            } else if (v ~ /^'\''/) {
+                v = substr(v, 2); sub(/'\''[ \t]*(#.*)?$/, "", v)
+            } else {
+                sub(/[ \t]+#.*$/, "", v); sub(/[ \t]+$/, "", v)
+            }
+        }
+        END { print v }' .env)"
+    case "$v" in *'${'*) die "$1 in .env: setup.sh and users.sh don't expand \${...}; write the value out" ;; esac
+    printf '%s\n' "$v"
 }
 
 with_authelia() { case "$(conf COMPOSE_FILE)" in *compose.authelia.yaml*) return 0 ;; esac; return 1; }
