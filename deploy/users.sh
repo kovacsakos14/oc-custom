@@ -90,7 +90,14 @@ api() {
 
 json() { yq -p json -o json -I0 "$@"; } # JSON in, compact JSON out
 
-user_id() { api GET "/graph/v1.0/users/$1" | yq -p json '.id'; }
+# user_id USER: the user's id. Assign it (id="$(user_id …)") before using it:
+# inside another command's arguments a failure wouldn't stop the script.
+user_id() {
+    local id
+    id="$(api GET "/graph/v1.0/users/$1" | yq -p json '.id // ""')"
+    [ -n "$id" ] || die "OpenCloud: no id for $1"
+    printf '%s' "$id"
+}
 
 set_role() { # USER ROLE_ID
     local id
@@ -99,13 +106,14 @@ set_role() { # USER ROLE_ID
 }
 
 set_role_id() { # USER_ID ROLE_ID
-    local app
+    local app body
     # Checked here: OpenCloud accepts an assignment with empty ids, and leaves the user without a role
     app="$(api GET /graph/v1.0/applications | yq -p json '.value[0].id // ""')" || app=""
     [ -n "$app" ] || die "OpenCloud: no application to assign the role from"
     export Y_ID="$1" Y_APP="$app" Y_ROLE="$2"
-    api POST "/graph/v1.0/users/$id/appRoleAssignments" \
-        "$(echo '{}' | json '.principalId = strenv(Y_ID) | .resourceId = strenv(Y_APP) | .appRoleId = strenv(Y_ROLE)')" > /dev/null
+    body="$(echo '{}' | json '.principalId = strenv(Y_ID) | .resourceId = strenv(Y_APP) | .appRoleId = strenv(Y_ROLE)')" ||
+        die "Couldn't build the role assignment"
+    api POST "/graph/v1.0/users/$1/appRoleAssignments" "$body" > /dev/null
 }
 
 # personal_drive USER_ID: "DRIVE_ID STATE" of the user's personal space (STATE
@@ -248,7 +256,7 @@ cmd_add() {
 }
 
 cmd_passwd() {
-    local user="${1-}" pw hash
+    local user="${1-}" pw hash id body
     [ -n "$user" ] || die "passwd USER"
     valid_name "$user"
     pw="$(read_password "${2-}")"
@@ -274,8 +282,9 @@ cmd_passwd() {
         fi
     else
         export Y_HASH="$pw"
-        api PATCH "/graph/v1.0/users/$(user_id "$user")" \
-            "$(echo '{}' | json '.passwordProfile.password = strenv(Y_HASH)')" > /dev/null
+        id="$(user_id "$user")"
+        body="$(echo '{}' | json '.passwordProfile.password = strenv(Y_HASH)')"
+        api PATCH "/graph/v1.0/users/$id" "$body" > /dev/null
         echo "OpenCloud: new password for $user"
     fi
 }
@@ -317,27 +326,31 @@ cmd_role() {
 }
 
 cmd_email() {
-    local user="${1-}" email="${2-}"
+    local user="${1-}" email="${2-}" id body
     [ -n "$user" ] && [ -n "$email" ] || die "email USER ADDRESS"
     valid_name "$user"
     export Y_EMAIL="$email"
-    api PATCH "/graph/v1.0/users/$(user_id "$user")" "$(echo '{}' | json '.mail = strenv(Y_EMAIL)')" > /dev/null
+    id="$(user_id "$user")"
+    body="$(echo '{}' | json '.mail = strenv(Y_EMAIL)')"
+    api PATCH "/graph/v1.0/users/$id" "$body" > /dev/null
     if with_authelia && has_user "$user"; then edit_user "$user" '.email = strenv(Y_EMAIL)'; fi
     echo "$user: e-mail is now $email"
 }
 
 cmd_enable() { # USER true|false
-    local user="${1-}" on="$2"
+    local user="${1-}" on="$2" id body
     [ -n "$user" ] || die "USER missing"
     valid_name "$user"
     export Y_FLAG="$on"
-    api PATCH "/graph/v1.0/users/$(user_id "$user")" "$(echo '{}' | json '.accountEnabled = (strenv(Y_FLAG) == "true")')" > /dev/null
+    id="$(user_id "$user")"
+    body="$(echo '{}' | json '.accountEnabled = (strenv(Y_FLAG) == "true")')"
+    api PATCH "/graph/v1.0/users/$id" "$body" > /dev/null
     if with_authelia && has_user "$user"; then edit_user "$user" '.disabled = (strenv(Y_FLAG) != "true")'; fi
     echo "$user $([ "$on" = true ] && echo enabled || echo disabled)"
 }
 
 cmd_delete() {
-    local user="${1-}" answer
+    local user="${1-}" answer id
     [ -n "$user" ] || die "delete USER"
     valid_name "$user"
     [ "$user" != admin ] || die "Not deleting admin"
@@ -345,7 +358,8 @@ cmd_delete() {
         read -rp "Delete $user and their files? Type the username: " answer
         [ "$answer" = "$user" ] || die "Not deleted"
     fi
-    api DELETE "/graph/v1.0/users/$(user_id "$user")" > /dev/null
+    id="$(user_id "$user")"
+    api DELETE "/graph/v1.0/users/$id" > /dev/null
     echo "OpenCloud: deleted $user"
     if with_authelia && has_user "$user"; then
         update_users 'del(.users[strenv(Y_USER)])'
