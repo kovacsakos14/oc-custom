@@ -11,6 +11,12 @@ for k in OC_STACK OC_DOMAIN OC_ADMIN_PASSWORD OC_IMAGE SWAG_NETWORK; do
 done
 case "$(conf OC_STACK)" in *[!a-z0-9_-]*) die "OC_STACK: lowercase letters, digits, - and _ only" ;; esac
 case "$(conf OC_DOMAIN)" in *[!A-Za-z0-9.-]*) die "OC_DOMAIN: a host name only, e.g. cloud.example.com" ;; esac
+if [ -n "$(conf SMTP_HOST)" ]; then
+    case "$(conf SMTP_ENCRYPTION)" in
+        starttls|ssltls|none) ;;
+        *) die "SMTP_ENCRYPTION: starttls, ssltls or none (is: '$(conf SMTP_ENCRYPTION)')" ;;
+    esac
+fi
 if with_authelia; then
     for k in AUTHELIA_IMAGE ADMIN_EMAIL; do [ -n "$(conf "$k")" ] || die "Set $k in .env"; done
 fi

@@ -128,6 +128,8 @@ docker run -d --name dtest-swag --network "$NET" --network-alias "$DOMAIN" --net
     -e PUID="$(id -u)" -e PGID="$(id -g)" -e TZ=Etc/UTC -e URL=deploy.test -e SUBDOMAINS=cloud,plain \
     -e ONLY_SUBDOMAINS=true -e VALIDATION=http -v "$WORK/swag:/config" "$SWAG_IMAGE" > /dev/null
 for i in $(seq 60); do docker logs dtest-swag 2>&1 | grep -q 'Server ready' && break; sleep 2; done
+check "setup.sh refuses an unknown SMTP_ENCRYPTION" \
+    '(cd "$WORK/a" && sed -i.bak "s/^SMTP_ENCRYPTION=.*/SMTP_ENCRYPTION=tls/" .env; ! ./setup.sh; s=$?; mv .env.bak .env; exit $s)'
 check "SWAG started without Let's Encrypt and accepts both sites (nginx -t)" 'docker exec dtest-swag nginx -t'
 
 echo "== With Authelia ($DOMAIN)"
