@@ -14,7 +14,10 @@ done
 first_start=""
 [ -f config/opencloud.yaml ] || first_start=1
 if [ -n "$first_start" ] || { with_authelia && [ ! -f "$USERS_FILE" ]; }; then
-    [ -n "$(conf OC_ADMIN_PASSWORD)" ] || die "Set OC_ADMIN_PASSWORD in .env"
+    admin_password="$(conf OC_ADMIN_PASSWORD)"
+    [ -n "$admin_password" ] || die "Set OC_ADMIN_PASSWORD in .env"
+    [ "${#admin_password}" -ge "$PASSWORD_MIN_LENGTH" ] ||
+        die "OC_ADMIN_PASSWORD needs at least $PASSWORD_MIN_LENGTH characters"
 fi
 case "$(conf OC_STACK)" in *[!a-z0-9_-]*) die "OC_STACK: lowercase letters, digits, - and _ only" ;; esac
 case "$(conf OC_DOMAIN)" in *[!A-Za-z0-9.-]*) die "OC_DOMAIN: a host name only, e.g. cloud.example.com" ;; esac

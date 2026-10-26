@@ -48,6 +48,7 @@ The desktop and mobile apps connect to `https://<your domain>` as usual. They op
 ./users.sh reset-2fa anna                  # lost phone: removes her 2FA devices
 ```
 - A password can come from stdin instead of the prompt: `echo 'secret' | ./users.sh passwd anna`. `--random` makes one up and shows it once.
+- Passwords need at least 3 characters, in `users.sh`, `setup.sh` and (with Authelia) on Authelia's pages. That's deliberately low for now: raise `PASSWORD_MIN_LENGTH` in `lib.sh` and `password_policy` in `authelia/configuration.yml` together.
 - **Roles:** `client` and `employee` are oc-custom's file-server types (no personal space; clients get folders shared as "Can't delete", staff as "Can edit"; see the [main README](../README.md#user-types-and-the-cant-delete-role)). `user`, `admin` and `light` are upstream's (User, Admin, User Light) with upstream's web UI. `add` without `--role` makes a `user`.
 - **Admins** (`--role admin`) are in Authelia's `admins` group, so they need 2FA. Changing the role with `users.sh role` changes both.
 - With Authelia, OpenCloud's own password for each user is random and unused; passwords are checked by Authelia only.

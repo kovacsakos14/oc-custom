@@ -2,6 +2,9 @@
 
 YQ_IMAGE=mikefarah/yq:4.54.1@sha256:4b3d9475d65571d28cbb19544d3820ec2945e4c8b2f18279394282b8dc3a592e
 USERS_FILE=authelia/users/users_database.yml
+# The shortest password users.sh and setup.sh accept; Authelia's own pages
+# check password_policy in authelia/configuration.yml, keep both the same
+PASSWORD_MIN_LENGTH=3
 
 die() { echo "$*" >&2; exit 1; }
 

@@ -153,6 +153,7 @@ check "Authelia has no OIDC sign-out endpoint; the web signs out at its /logout 
      curl_ "https://$DOMAIN/config.json" | grep -Eq "\"logoutUrl\": ?\"https://$DOMAIN/authelia/logout\\?rd="'
 check "no Calendar (capability support-radicale off)" \
     'curl_ -u "admin:$(admin_token)" "https://$DOMAIN/ocs/v1.php/cloud/capabilities?format=json" | grep -Eq "\"support-radicale\": ?false"'
+check "users.sh add refuses a password that's too short" '! echo ab | ./users.sh add shorty'
 check "users.sh add alice (password on stdin)" 'echo Alice-pass1 | ./users.sh add alice --name "Alice Example" --email alice@deploy.test'
 check "impersonation is off: admin's token can't make one for alice" \
     '[ "$(curl_ -u "admin:$(admin_token)" -X POST -o /dev/null -w "%{http_code}" \

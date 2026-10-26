@@ -141,6 +141,7 @@ read_password() { # [--random]: prints the password
         IFS= read -r p || true
     fi
     [ -n "$p" ] || die "Empty password"
+    [ "${#p}" -ge "$PASSWORD_MIN_LENGTH" ] || die "The password needs at least $PASSWORD_MIN_LENGTH characters"
     printf '%s' "$p"
 }
 
