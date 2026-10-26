@@ -1,5 +1,5 @@
 diff --git a/packages/web-app-files/src/composables/actions/files/useFileActionsCreateNewFile.ts b/packages/web-app-files/src/composables/actions/files/useFileActionsCreateNewFile.ts
-index 8fa9dcc..2b43529 100644
+index 8fa9dcc..98e5a50 100644
 --- a/packages/web-app-files/src/composables/actions/files/useFileActionsCreateNewFile.ts
 +++ b/packages/web-app-files/src/composables/actions/files/useFileActionsCreateNewFile.ts
 @@ -16,6 +16,7 @@ import {
@@ -18,19 +18,20 @@ index 8fa9dcc..2b43529 100644
  
    const { openEditor } = useFileActions()
    const clientService = useClientService()
-@@ -153,6 +155,10 @@ export const useFileActionsCreateNewFile = ({ space }: { space?: Ref<SpaceResour
-         handler: (args) => handler(args, appFileExtension.extension, appFileExtension),
-         label: () => $gettext(appFileExtension.newFileMenu.menuTitle()),
-         isVisible: () => {
-+          // oc-custom: no new text files for Clients (text files still open in the editor)
-+          if (appFileExtension.app === 'text-editor' && has('hideTextEditor')) {
-+            return false
-+          }
-           return unref(currentFolder)?.canUpload({ user: userStore.user })
-         },
-         class: 'oc-files-actions-create-new-file',
+@@ -147,6 +149,11 @@ export const useFileActionsCreateNewFile = ({ space }: { space?: Ref<SpaceResour
+     }
+ 
+     for (const [, appFileExtension] of Object.entries(defaultMapping)) {
++      // oc-custom: no new text files for Clients (text files still open in the editor); left
++      // out of the list, as the "New" menu doesn't ask isVisible
++      if (appFileExtension.app === 'text-editor' && has('hideTextEditor')) {
++        continue
++      }
+       actions.push({
+         name: 'create-new-file',
+         icon: 'add',
 diff --git a/packages/web-app-files/tests/unit/composables/actions/files/useFileActionsCreateNewFile.spec.ts b/packages/web-app-files/tests/unit/composables/actions/files/useFileActionsCreateNewFile.spec.ts
-index 0bd0ea8..f596834 100644
+index 0bd0ea8..563aad2 100644
 --- a/packages/web-app-files/tests/unit/composables/actions/files/useFileActionsCreateNewFile.spec.ts
 +++ b/packages/web-app-files/tests/unit/composables/actions/files/useFileActionsCreateNewFile.spec.ts
 @@ -1,4 +1,5 @@
@@ -44,7 +45,7 @@ index 0bd0ea8..f596834 100644
  
  describe('useFileActionsCreateNewFile', () => {
 +  // oc-custom
-+  describe('isVisible', () => {
++  describe('actions', () => {
 +    it.each([
 +      ['User', 'd7beeea8-8ff4-406b-8fb6-ab2dd81e6b11', true],
 +      ['Employee', '12047bc6-9aa3-49f6-8d78-e64b3065cd99', true],
@@ -53,7 +54,7 @@ index 0bd0ea8..f596834 100644
 +      getWrapper({
 +        typeId,
 +        setup: ({ actions }) => {
-+          expect(unref(actions)[0].isVisible({ space: null, resources: [] })).toBe(visible)
++          expect(unref(actions).some(({ ext }) => ext === '.txt')).toBe(visible)
 +        }
 +      })
 +    })
