@@ -33,7 +33,9 @@ jobs:
             tag="test-${GITHUB_SHA::7}"
           fi
           echo "image=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/oc-custom:$tag" >>"$GITHUB_OUTPUT"
-          echo "web=web-$WEB_VERSION-${{ hashFiles('patches/web/*.patch') }}" >>"$GITHUB_OUTPUT"
+          # build-native decides whether the cached web is still good (its key also
+          # covers the node image and pnpm); this one only has to change with them
+          echo "web=web-$WEB_VERSION-${{ hashFiles('patches/web/*.patch', 'versions.env', 'scripts/build-native') }}" >>"$GITHUB_OUTPUT"
       # Caches speed up manual test builds only. A release (tag) builds from
       # nothing, so no cache another run wrote can end up in it.
       # The patched web: rebuilt only when its version or patches change
