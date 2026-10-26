@@ -143,10 +143,16 @@ check "no Calendar (capability support-radicale off)" \
 check "users.sh add alice (password on stdin)" 'echo Alice-pass1 | ./users.sh add alice --name "Alice Example" --email alice@deploy.test'
 check "users.sh add bob as User Light (--random)" './users.sh add bob --role light --email bob@deploy.test --random < /dev/null'
 check "users.sh disable bob" './users.sh disable bob'
+check "users.sh add erin as Client (--random)" './users.sh add erin --role client --email erin@deploy.test --random < /dev/null'
+check "users.sh add fred as Employee (--random)" './users.sh add fred --role employee --email fred@deploy.test --random < /dev/null'
 list="$(./users.sh list)"
 echo "$list" | sed 's/^/        /'
 check "list: alice user, bob light and disabled on both sides" \
     'grep -Eq "^alice .* user +yes +ok$" <<< "$list" && grep -Eq "^bob .* light +no +disabled$" <<< "$list"'
+check "list: erin client, fred employee" \
+    'grep -Eq "^erin .* client +yes +ok$" <<< "$list" && grep -Eq "^fred .* employee +yes +ok$" <<< "$list"'
+check "users.sh role erin employee, then client again" \
+    './users.sh role erin employee && ./users.sh list | grep -Eq "^erin .* employee " && ./users.sh role erin client'
 step "alice: password only, Profile without Edit, Change password on Authelia's page, Log out ends Authelia's session" user.js \
     USER_NAME=alice USER_PASSWORD=Alice-pass1 USER_NEW_PASSWORD=Alice-pass2 USER_EMAIL=alice@deploy.test
 step "bob (disabled) can't sign in" disabled.js USER_NAME=bob USER_PASSWORD=whatever
@@ -161,6 +167,7 @@ check "users.sh role alice user takes her out" './users.sh role alice user && ! 
 check "users.sh role alice boss is refused" '! ./users.sh role alice boss'
 check "users.sh delete bob (both sides)" \
     './users.sh delete bob < /dev/null && ! ./users.sh list | grep -q "^bob " && ! grep -q "^  bob:" authelia/users/users_database.yml'
+check "users.sh delete erin and fred" './users.sh delete erin < /dev/null && ./users.sh delete fred < /dev/null'
 # A user made in OpenCloud only (its web UI, or before Authelia): passwd adds them to Authelia
 check "a user created in OpenCloud only gets an Authelia entry from users.sh passwd" \
     'curl_ -u "admin:$(cat .admin-token)" -H "Content-Type: application/json" -o /dev/null -w "%{http_code}" \

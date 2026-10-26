@@ -13,7 +13,7 @@ run(async () => {
   await p.setViewport({ width: 1280, height: 800 });
   await p.goto(O + '/', { waitUntil: 'networkidle2' });
   await signIn(p, USER, PASS);
-  await inFiles(p, 'Shared with me');
+  await inFiles(p);
   console.log(`OK ${USER} signs in with a password only`);
 
   await openProfile(p);
@@ -53,7 +53,7 @@ run(async () => {
   if (p.url().startsWith(O + '/files')) throw new Error('the old password still works');
   await p.reload({ waitUntil: 'networkidle2' });
   await signIn(p, USER, NEW);
-  await inFiles(p, 'Shared with me');
+  await inFiles(p);
   console.log('OK the old password is refused, the new one signs in');
 
   // Log out (patch 12 + WEB_OPTION_LOGOUT_URL): Authelia's session ends as well

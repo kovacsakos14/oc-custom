@@ -13,7 +13,7 @@ run(async () => {
   await p.type('#oc-login-username', USER);
   await p.type('#oc-login-password', PASS);
   await p.click('button[type=submit]');
-  await inFiles(p, 'Shared with me');
+  await inFiles(p);
   console.log(`OK ${USER} signs in on OpenCloud's own page`);
   await openProfile(p);
   await sleep(1000);
