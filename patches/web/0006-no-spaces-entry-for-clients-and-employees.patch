@@ -29,7 +29,7 @@ index 1864e10..dfe4671 100644
        priority: 40
      },
 diff --git a/packages/web-app-files/tests/unit/index.spec.ts b/packages/web-app-files/tests/unit/index.spec.ts
-index 5201cf2..8d4b71c 100644
+index 5201cf2..4828d81 100644
 --- a/packages/web-app-files/tests/unit/index.spec.ts
 +++ b/packages/web-app-files/tests/unit/index.spec.ts
 @@ -1,6 +1,13 @@
@@ -47,7 +47,7 @@ index 5201cf2..8d4b71c 100644
  import { SpaceResource } from '@opencloud-eu/web-client'
  import { mock } from 'vitest-mock-extended'
  
-@@ -32,5 +39,22 @@ describe('Web app files', () => {
+@@ -32,5 +39,25 @@ describe('Web app files', () => {
          expect(items[0].isVisible()).toBeFalsy()
        })
      })
@@ -57,7 +57,10 @@ index 5201cf2..8d4b71c 100644
 +        useCapabilityStore().capabilities.spaces = { projects: true } as any
 +        useUserStore().user = mock<User>({ appRoleAssignments: [{ id: typeId } as any] })
 +        const items = callableNavItems(mock<GlobalProperties>())
-+        return items.find((i) => i.route.path === '/files/spaces/projects')
++        return items.find(
++          ({ route }) =>
++            typeof route === 'object' && 'path' in route && route.path === '/files/spaces/projects'
++        )
 +      }
 +      it.each([
 +        ['User', 'd7beeea8-8ff4-406b-8fb6-ab2dd81e6b11', true],
