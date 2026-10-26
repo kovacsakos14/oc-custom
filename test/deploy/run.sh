@@ -226,6 +226,9 @@ check "a user created in OpenCloud only gets an Authelia entry from users.sh pas
      curl_ -H "Content-Type: application/json" -d "{\"username\":\"dave\",\"password\":\"Dave-pass1\"}" \
         "https://$DOMAIN/authelia/api/firstfactor" | grep -q "\"status\":\"OK\""'
 check "users.sh leaves no app token on disk" '[ ! -e .admin-token ]'
+check "users.sh revokes its app token when it's done" \
+    'T="$(admin_token)"; n="$(curl_ -u "admin:$T" "https://$DOMAIN/auth-app/tokens" | yq_ length)" &&
+     ./users.sh list > /dev/null && [ "$(curl_ -u "admin:$T" "https://$DOMAIN/auth-app/tokens" | yq_ length)" = "$n" ]'
 check "the user file is private (600)" '[ "$(stat -c %a authelia/users/users_database.yml)" = 600 ]'
 docker compose down > /dev/null 2>&1
 

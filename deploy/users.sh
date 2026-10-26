@@ -39,9 +39,10 @@ EOF
 
 # --- OpenCloud's API, as admin with an app token, from inside its container
 
-# token: makes this run's app token for admin. It's kept in memory only and
-# expires after 10 minutes, so nothing usable is left behind. Called once
-# before the command, not from api(): api() runs in subshells.
+# token: makes this run's app token for admin. It's kept in memory only,
+# revoked at exit and expires after 10 minutes anyway, so nothing usable is
+# left behind. Called once before the command, not from api(): api() runs in
+# subshells.
 token() {
     local out i
     if [ -e .admin-token ]; then
@@ -55,22 +56,32 @@ token() {
     done
     ADMIN_TOKEN="$(printf '%s\n' "$out" | sed -n 's/^ *token: //p')"
     [ -n "$ADMIN_TOKEN" ] || die "Couldn't create an app token for admin: $out"
+    EXIT_HOOKS+=(revoke_token)
+}
+
+revoke_token() {
+    local q
+    q="$(Y_TOKEN="$ADMIN_TOKEN" yq -n 'strenv(Y_TOKEN) | @uri')" &&
+        (api DELETE "/auth-app/tokens?token=$q" > /dev/null 2>&1) ||
+        echo "Note: couldn't revoke this run's app token for admin; it expires within 10 minutes" >&2
 }
 
 # cfg_quote: a value for curl's config file (in double quotes)
 cfg_quote() { printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'; }
 
 # api METHOD PATH [JSON [HEADER]]: the response body on stdout; fails on HTTP >= 300.
-# The token and the body go through curl's config on stdin, not its command line.
+# The token, the address and the body go through curl's config on stdin, not
+# its command line.
 api() {
     local method="$1" path="$2" body="${3-}" header="${4-}" out code
     [ -n "$ADMIN_TOKEN" ] || die "No app token (call token first)"
     out="$({
         printf 'user = "admin:%s"\n' "$(cfg_quote "$ADMIN_TOKEN")"
+        printf 'url = "%s"\n' "$(cfg_quote "http://127.0.0.1:9200$path")"
         [ -z "$body" ] || printf 'data-raw = "%s"\n' "$(cfg_quote "$body")"
         [ -z "$header" ] || printf 'header = "%s"\n' "$(cfg_quote "$header")"
     } | docker compose exec -T opencloud curl -sS -K - -X "$method" -H 'Content-Type: application/json' \
-        -w '\n%{http_code}' "http://127.0.0.1:9200$path")"
+        -w '\n%{http_code}')"
     code="${out##*$'\n'}"
     out="${out%$'\n'*}"
     [ "$code" -lt 300 ] 2>/dev/null || die "OpenCloud: $method $path: HTTP $code $out"

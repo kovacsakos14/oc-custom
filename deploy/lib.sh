@@ -22,7 +22,7 @@ with_authelia() { case "$(conf COMPOSE_FILE)" in *compose.authelia.yaml*) return
 # expression), never into the expression itself
 yq() {
     envs=""
-    for v in Y_USER Y_NAME Y_EMAIL Y_HASH Y_GROUP Y_FLAG Y_ID Y_APP Y_ROLE; do envs="$envs -e $v"; done
+    for v in Y_USER Y_NAME Y_EMAIL Y_HASH Y_GROUP Y_FLAG Y_ID Y_APP Y_ROLE Y_TOKEN; do envs="$envs -e $v"; done
     # shellcheck disable=SC2086 # word splitting is the point
     docker run --rm -i $envs "$YQ_IMAGE" "$@"
 }
@@ -36,7 +36,11 @@ hash_password() {
 
 USERS_LOCK=authelia/.users.lock
 USERS_TMP=""
-trap '[ -z "$USERS_TMP" ] || rm -f "$USERS_TMP"' EXIT
+
+# Commands run at exit, also after die: EXIT_HOOKS+=('command')
+EXIT_HOOKS=('[ -z "$USERS_TMP" ] || rm -f "$USERS_TMP"')
+on_exit() { local h; for h in "${EXIT_HOOKS[@]}"; do eval "$h" || true; done; }
+trap on_exit EXIT
 
 # lock_users: one users.sh at a time changes the user file, until it exits
 # (the lock lives outside users/, the folder Authelia watches)
