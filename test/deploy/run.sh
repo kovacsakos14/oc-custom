@@ -36,9 +36,12 @@ DOMAIN2=plain.deploy.test  # without
 ADMIN_PASSWORD='Admin-pass1'
 
 fails=0
-ok() { echo "  ok    $*"; }
-bad() { echo "  FAIL  $*"; fails=$((fails + 1)); }
+# Each result shows how long its check or step took; T0 is set when it starts
+T0=$SECONDS
+ok() { printf '  ok    %4ss  %s\n' "$((SECONDS - T0))" "$*"; }
+bad() { printf '  FAIL  %4ss  %s\n' "$((SECONDS - T0))" "$*"; fails=$((fails + 1)); }
 check() { # description, shell code (run with this script's functions)
+    T0=$SECONDS
     if eval "$2" > /dev/null 2>&1; then ok "$1"; else bad "$1"; fi
 }
 
@@ -69,6 +72,7 @@ browser() { # script, env...
 step() { # description, browser script, env...
     local d="$1"; shift
     echo "  ..    $d"
+    T0=$SECONDS
     if browser "$@"; then ok "$d"; else bad "$d"; fi
 }
 
@@ -143,7 +147,7 @@ check "setup.sh refuses an unknown SMTP_ENCRYPTION" \
     '(cd "$WORK/a" && sed -i.bak "s/^SMTP_ENCRYPTION=.*/SMTP_ENCRYPTION=tls/" .env; ! ./setup.sh; s=$?; mv .env.bak .env; exit $s)'
 check "SWAG started without Let's Encrypt and accepts both sites (nginx -t)" 'docker exec dtest-swag nginx -t'
 
-echo "== With Authelia ($DOMAIN)"
+echo "== With Authelia ($DOMAIN), at ${SECONDS}s"
 cd "$WORK/a"
 check "docker compose up -d" "docker compose up -d"
 check "OpenCloud and Authelia answer through SWAG" 'wait_up "$DOMAIN" yes'
@@ -233,7 +237,7 @@ check "users.sh revokes its app token when it's done" \
 check "the user file is private (600)" '[ "$(stat -c %a authelia/users/users_database.yml)" = 600 ]'
 docker compose down > /dev/null 2>&1
 
-echo "== Without Authelia ($DOMAIN2)"
+echo "== Without Authelia ($DOMAIN2), at ${SECONDS}s"
 cd "$WORK/b"
 check "docker compose up -d" "docker compose up -d"
 check "OpenCloud answers through SWAG" 'wait_up "$DOMAIN2" no'
@@ -254,5 +258,6 @@ step "carol: OpenCloud's own sign-in page, Change password opens its dialog" bui
 docker compose down > /dev/null 2>&1
 
 echo
+echo "Took ${SECONDS}s"
 if [ "$fails" = 0 ]; then echo "All checks passed"; else echo "$fails check(s) failed; screenshots in $WORK/shots (with --keep)"; fi
 [ "$fails" = 0 ]
