@@ -78,7 +78,7 @@ Everything else is upstream's: the image is the official one with only `/usr/bin
 ```yaml
 services:
   opencloud:
-    image: ghcr.io/kovacsakos14/oc-custom:7.2.4-7   # was: opencloudeu/opencloud:7.2.4
+    image: ghcr.io/kovacsakos14/oc-custom:7.2.4-8   # was: opencloudeu/opencloud:7.2.4
     volumes:
       - ./config:/etc/opencloud
       - ./data:/var/lib/opencloud
@@ -89,6 +89,7 @@ services:
 - **Update or roll back** by changing the tag, then `docker compose pull && docker compose up -d`.
 - **Tags never change** once published: `7.2.4-1`, `7.2.4-2`, … each mean one build. There's no `latest`, so a server only changes when you change its tag. For extra certainty, pin the digest as well (`…:7.2.4-1@sha256:…`).
 - **The image is public,** so servers pull it without logging in. It holds nothing secret: config and branding stay on each server.
+- **From 7.2.4-7 to 7.2.4-8:** change the tag. The feedback button in the top bar is gone (`WEB_OPTION_DISABLE_FEEDBACK_LINK=true` in the image; a compose file can set it to `false`), and the "Authentication failed" page has a "Log in again" button.
 - **From 7.2.4-6 to 7.2.4-7:** change the tag. With [`deploy/`](deploy/README.md), also take its new files, run `./setup.sh` and copy the rewritten SWAG site to SWAG again; `OC_ADMIN_PASSWORD` can then be emptied in `.env`; impersonation is off unless `.env` sets `AUTH_APP_ENABLE_IMPERSONATION=true`; the first `users.sh` run removes an old `.admin-token`, whose token should be deleted under admin's App Tokens. Users changed to Client or Employee keep their personal space but disabled (`users.sh role`).
 - **From 7.2.4-5 to 7.2.4-6:** give client accounts the Client type and staff accounts the Employee type, and share client folders as "Can't delete" (existing "Can upload" shares lose rename/move in the apps). Accounts left as User or User Light get upstream's web UI.
 
