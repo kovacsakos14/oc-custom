@@ -136,7 +136,7 @@ OpenCloud merges `themes/_branding/theme.json` over its own theme on every reque
 
 ## Building
 The build needs more memory than a small VM has (the Go link step alone takes several GB), so it runs in **GitHub Actions** (`.github/workflows/build.yml`):
-- **A tag `v7.2.4-<build>`** builds, smoke-tests and publishes `:7.2.4-<build>`. The tag must match `OC_VERSION` and `BUILD` in `versions.env`, and an existing image tag is never overwritten.
+- **A tag `v7.2.4-<build>`** builds, smoke-tests and publishes `:7.2.4-<build>`, then creates a GitHub release for the tag (the image name, then the PRs merged since the last release). The tag must match `OC_VERSION` and `BUILD` in `versions.env`, and an existing image tag is never overwritten. A failed build creates no release.
 - **A manual run** (Actions → Build → Run workflow) publishes `:test-<commit>` for trying a build before tagging it.
 
 `scripts/build-native` is what CI runs, and it works on any machine with Docker and about 8 GB of RAM:
