@@ -1,8 +1,25 @@
 diff --git a/packages/web-runtime/src/services/auth/authService.ts b/packages/web-runtime/src/services/auth/authService.ts
-index a84b295..af98739 100644
+index a84b295..2736063 100644
 --- a/packages/web-runtime/src/services/auth/authService.ts
 +++ b/packages/web-runtime/src/services/auth/authService.ts
-@@ -331,6 +331,13 @@ export class AuthService implements AuthServiceInterface {
+@@ -230,9 +230,14 @@ export class AuthService implements AuthServiceInterface {
+     }
+   }
+ 
+-  public loginUser(redirectUrl?: string) {
++  /**
++   * oc-custom: `prompt: 'login'` makes the identity provider show its sign-in form even when it
++   * still has a session, e.g. one of an account disabled since (it would only answer with an
++   * error again).
++   */
++  public loginUser(redirectUrl?: string, prompt?: 'login') {
+     this.userManager.setPostLoginRedirectUrl(redirectUrl)
+-    return this.userManager.signinRedirect()
++    return this.userManager.signinRedirect(prompt ? { prompt } : undefined)
+   }
+ 
+   public signinSilent() {
+@@ -331,6 +336,13 @@ export class AuthService implements AuthServiceInterface {
      const endSessionEndpoint = await this.userManager.metadataService?.getEndSessionEndpoint()
      if (!endSessionEndpoint) {
        await this.userManager.removeUser()
