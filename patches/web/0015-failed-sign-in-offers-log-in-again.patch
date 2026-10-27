@@ -1,0 +1,99 @@
+diff --git a/packages/web-runtime/src/pages/oidcCallback.vue b/packages/web-runtime/src/pages/oidcCallback.vue
+index b993141..4465fa8 100644
+--- a/packages/web-runtime/src/pages/oidcCallback.vue
++++ b/packages/web-runtime/src/pages/oidcCallback.vue
+@@ -7,12 +7,23 @@
+         <p v-text="footerSlogan" />
+       </template>
+     </oc-card>
++    <oc-button
++      v-if="error"
++      id="exitAnchor"
++      class="mt-4 w-sm"
++      size="large"
++      appearance="filled"
++      color-role="primary"
++      v-bind="loginButtonAttrs"
++    >
++      {{ $gettext('Log in again') }}
++    </oc-button>
+   </div>
+ </template>
+ 
+ <script setup lang="ts">
+ import { computed, onBeforeUnmount, onMounted, ref, unref } from 'vue'
+-import { useEmbedMode, useRoute, useThemeStore } from '@opencloud-eu/web-pkg'
++import { useConfigStore, useEmbedMode, useRoute, useThemeStore } from '@opencloud-eu/web-pkg'
+ import { authService } from '../services/auth'
+ import { storeToRefs } from 'pinia'
+ import { useGettext } from 'vue3-gettext'
+@@ -41,6 +52,16 @@ const cardHint = computed(() => {
+ })
+ const footerSlogan = computed(() => unref(currentTheme)?.slogan)
+ 
++// oc-custom: a failed sign-in (e.g. after the account was disabled, or the session ended at the
++// identity provider) offers the way back to the login page, as the "Not logged in" page does
++const configStore = useConfigStore()
++const loginButtonAttrs = computed(() => {
++  if (configStore.options.loginUrl) {
++    return { type: 'a' as const, href: new URL(encodeURI(configStore.options.loginUrl)).toString() }
++  }
++  return { type: 'router-link' as const, to: { name: 'login' } }
++})
++
+ const route = useRoute()
+ 
+ const handleRequestedTokenEvent = (event: MessageEvent): void => {
+diff --git a/packages/web-runtime/tests/unit/pages/oidcCallback.spec.ts b/packages/web-runtime/tests/unit/pages/oidcCallback.spec.ts
+index 0ea2abf..a88895e 100644
+--- a/packages/web-runtime/tests/unit/pages/oidcCallback.spec.ts
++++ b/packages/web-runtime/tests/unit/pages/oidcCallback.spec.ts
+@@ -8,6 +8,7 @@ import oidcCallback from '../../../src/pages/oidcCallback.vue'
+ import { authService } from '../../../src/services/auth'
+ import { mock } from 'vitest-mock-extended'
+ import { computed } from 'vue'
++import { useRoute } from '@opencloud-eu/web-pkg'
+ 
+ const mockUseEmbedMode = vi.fn()
+ 
+@@ -19,8 +20,40 @@ vi.mock('@opencloud-eu/web-pkg', async (importOriginal) => ({
+ 
+ const postMessageMock = vi.fn()
+ console.debug = vi.fn()
++console.warn = vi.fn()
+ 
+ describe('oidcCallback page', () => {
++  // oc-custom: a failed sign-in offers "Log in again"
++  describe('authentication error', () => {
++    beforeEach(() => {
++      mockUseEmbedMode.mockReturnValue({
++        isDelegatingAuthentication: computed(() => false),
++        verifyDelegatedAuthenticationOrigin: vi.fn().mockReturnValue(true)
++      })
++    })
++
++    it('shows a button back to the login page', async () => {
++      vi.mocked(useRoute).mockReturnValueOnce({
++        query: { error: 'login_required', error_description: 'x' }
++      } as any)
++      const signInCallbackSpy = vi.spyOn(authService, 'signInCallback')
++      const { wrapper } = getWrapper()
++      await wrapper.vm.$nextTick()
++
++      expect(signInCallbackSpy).not.toHaveBeenCalled()
++      const button = wrapper.find('#exitAnchor')
++      expect(button.exists()).toBe(true)
++      expect(button.attributes('type')).toBe('router-link')
++    })
++
++    it('shows no button while signing in', () => {
++      vi.spyOn(authService, 'signInCallback').mockImplementation(() => Promise.resolve())
++      const { wrapper } = getWrapper()
++
++      expect(wrapper.find('#exitAnchor').exists()).toBe(false)
++    })
++  })
++
+   describe('delegated authentication', () => {
+     it('when authentication is delegated does not call signInCallback immediately', () => {
+       mockUseEmbedMode.mockReturnValue({
