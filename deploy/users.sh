@@ -395,6 +395,7 @@ cmd_reset_2fa() {
 }
 
 cmd="${1-help}"; shift || true
+case "$cmd" in help|-h|--help) ;; *) yq_start ;; esac
 case "$cmd" in
     list|add|passwd|role|email|disable|enable|delete) token ;;
 esac

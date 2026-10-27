@@ -38,12 +38,30 @@ conf() {
 with_authelia() { case "$(conf COMPOSE_FILE)" in *compose.authelia.yaml*) return 0 ;; esac; return 1; }
 
 # yq on stdin; values go in as environment variables (strenv(NAME) in the
-# expression), never into the expression itself
+# expression), never into the expression itself. After yq_start it runs in
+# that container (docker exec, ~0.2 s), otherwise in a new one (~2 s).
 yq() {
     envs=""
     for v in Y_USER Y_NAME Y_EMAIL Y_HASH Y_GROUP Y_FLAG Y_ID Y_APP Y_ROLE Y_TOKEN; do envs="$envs -e $v"; done
-    # shellcheck disable=SC2086 # word splitting is the point
-    docker run --rm -i $envs "$YQ_IMAGE" "$@"
+    if [ -n "$YQ_CONTAINER" ]; then
+        # shellcheck disable=SC2086 # word splitting is the point
+        docker exec -i $envs "$YQ_CONTAINER" yq "$@"
+    else
+        # shellcheck disable=SC2086
+        docker run --rm -i $envs "$YQ_IMAGE" "$@"
+    fi
+}
+
+# yq_start: one yq container for this run, removed at exit. Call it in the
+# main shell, not in $(...): the container's name has to reach later calls.
+# If it can't start, yq() starts a container per call as before. sleep and
+# --rm remove it even if this script is killed.
+YQ_CONTAINER=""
+yq_start() {
+    local name="oc-yq-$$"
+    docker run -d --rm --name "$name" --entrypoint sh "$YQ_IMAGE" -c 'sleep 600' > /dev/null 2>&1 < /dev/null || return 0
+    YQ_CONTAINER="$name"
+    EXIT_HOOKS+=('docker rm -f "$YQ_CONTAINER" > /dev/null 2>&1')
 }
 
 # hash_password PASSWORD: an argon2id hash from Authelia's own tool. The password goes
