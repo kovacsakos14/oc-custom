@@ -94,5 +94,9 @@ jobs:
           GH_REPO: ${{ github.repository }}
           IMAGE: ${{ needs.image.outputs.image }}
         run: |
+          # The notes cover the PRs since the previous tag: without an earlier
+          # GitHub release, --generate-notes alone would start at the first commit
+          previous="$(gh api "repos/$GH_REPO/tags" --paginate --jq '.[].name' |
+            grep -E '^v[0-9]' | sort -V | grep -B1 -xF "$GITHUB_REF_NAME" | grep -vxF "$GITHUB_REF_NAME" || true)"
           gh release create "$GITHUB_REF_NAME" --verify-tag --title "$GITHUB_REF_NAME" \
-            --notes "Image: \`$IMAGE\`" --generate-notes
+            --notes "Image: \`$IMAGE\`" --generate-notes ${previous:+--notes-start-tag "$previous"}
