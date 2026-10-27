@@ -77,7 +77,7 @@ Everything else is upstream's: the image is the official one with only `/usr/bin
 ```yaml
 services:
   opencloud:
-    image: ghcr.io/kovacsakos14/oc-custom:7.2.4-6   # was: opencloudeu/opencloud:7.2.4
+    image: ghcr.io/kovacsakos14/oc-custom:7.2.4-7   # was: opencloudeu/opencloud:7.2.4
     volumes:
       - ./config:/etc/opencloud
       - ./data:/var/lib/opencloud
@@ -88,6 +88,7 @@ services:
 - **Update or roll back** by changing the tag, then `docker compose pull && docker compose up -d`.
 - **Tags never change** once published: `7.2.4-1`, `7.2.4-2`, … each mean one build. There's no `latest`, so a server only changes when you change its tag. For extra certainty, pin the digest as well (`…:7.2.4-1@sha256:…`).
 - **The image is public,** so servers pull it without logging in. It holds nothing secret: config and branding stay on each server.
+- **From 7.2.4-6 to 7.2.4-7:** change the tag. With [`deploy/`](deploy/README.md), also take its new files, run `./setup.sh` and copy the rewritten SWAG site to SWAG again; `OC_ADMIN_PASSWORD` can then be emptied in `.env`; impersonation is off unless `.env` sets `AUTH_APP_ENABLE_IMPERSONATION=true`; the first `users.sh` run removes an old `.admin-token`, whose token should be deleted under admin's App Tokens. Users changed to Client or Employee keep their personal space but disabled (`users.sh role`).
 - **From 7.2.4-5 to 7.2.4-6:** give client accounts the Client type and staff accounts the Employee type, and share client folders as "Can't delete" (existing "Can upload" shares lose rename/move in the apps). Accounts left as User or User Light get upstream's web UI.
 
 ## Branding
@@ -217,7 +218,7 @@ Builds are tested in a separate OpenCloud test environment (Docker Compose, not 
 - `CLAUDE.md`: working notes for continuing development (decisions, findings, next steps).
 
 ## Status
-**Released:** `7.2.4-6` (2026-10-26; `sha256:a6959387…`): the user types Client and Employee and the share role "Can't delete" (patches 13–16); the file-server changes of 7.2.4-5 now apply to Clients and Employees only (Admins, Users and User Light get upstream's web again), "Can upload" is upstream's again, and Calendar off and the notification table are image defaults. `7.2.4-5` (2026-10-22; `sha256:e313341d…`): patches 7–12 (username search, Shares first and no Spaces, no hiding of shares, no permanent link for User Light, the Text Editor out of the menus, "Log out" through Authelia's `/logout`) and Calendar off in `deploy/`; otherwise the same as `7.2.4-4`. `7.2.4-4` (2026-10-22): patch 6 (["Change password" can open an external password page](#whats-changed)), for the optional Authelia setup in [`deploy/`](deploy/README.md), tested with Authelia 4.39.28 (`AUTHELIA_IMAGE` in `versions.env`); otherwise the same as `7.2.4-3`. `7.2.4-3` (2026-10-21): the sign-in page takes background images and the favicon only from the server itself (no `https://` URLs, `%` escapes or `..`); the web is built with a pinned node image and pnpm, releases without caches. `7.2.4-2` (2026-10-21): adds the sign-in background image (`common.signin.backgroundImage`) to patch 5; otherwise the same as `7.2.4-1`.
+**Released:** `7.2.4-7` (2026-10-27; `sha256:ddfbd25b…`): fixes from a review of the whole repo: "Can't delete" can't replace a file with content (the server refuses it, the upload dialog has no Replace), only an admin can enable a disabled personal space, Clients and Employees see no Personal or Text Editor entry even with a disabled one (patches 17–20); `deploy/` hardened (impersonation opt-in, a short-lived token, the admin password only for `init`, Authelia sees the real client address, a stricter `.env` and SMTP check) and `users.sh` faster. `7.2.4-6` (2026-10-26; `sha256:a6959387…`): the user types Client and Employee and the share role "Can't delete" (patches 13–16); the file-server changes of 7.2.4-5 now apply to Clients and Employees only (Admins, Users and User Light get upstream's web again), "Can upload" is upstream's again, and Calendar off and the notification table are image defaults. `7.2.4-5` (2026-10-22; `sha256:e313341d…`): patches 7–12 (username search, Shares first and no Spaces, no hiding of shares, no permanent link for User Light, the Text Editor out of the menus, "Log out" through Authelia's `/logout`) and Calendar off in `deploy/`; otherwise the same as `7.2.4-4`. `7.2.4-4` (2026-10-22): patch 6 (["Change password" can open an external password page](#whats-changed)), for the optional Authelia setup in [`deploy/`](deploy/README.md), tested with Authelia 4.39.28 (`AUTHELIA_IMAGE` in `versions.env`); otherwise the same as `7.2.4-3`. `7.2.4-3` (2026-10-21): the sign-in page takes background images and the favicon only from the server itself (no `https://` URLs, `%` escapes or `..`); the web is built with a pinned node image and pnpm, releases without caches. `7.2.4-2` (2026-10-21): adds the sign-in background image (`common.signin.backgroundImage`) to patch 5; otherwise the same as `7.2.4-1`.
 
 `7.2.4-1` (2026-10-21), OpenCloud 7.2.4 with patches 1–5. Tested:
 - what a "Can upload" recipient is told and can do (rename and move yes, delete no);
