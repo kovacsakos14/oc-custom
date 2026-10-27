@@ -79,9 +79,11 @@ hash_password() {
 USERS_LOCK=authelia/.users.lock
 USERS_TMP=""
 
-# Commands run at exit, also after die: EXIT_HOOKS+=('command')
+# Commands run at exit, also after die: EXIT_HOOKS+=('command'). The last one
+# added runs first, so a hook can still use what was set up before it (the
+# token's revocation needs the yq container).
 EXIT_HOOKS=('[ -z "$USERS_TMP" ] || rm -f "$USERS_TMP"')
-on_exit() { local h; for h in "${EXIT_HOOKS[@]}"; do eval "$h" || true; done; }
+on_exit() { local i; for ((i = ${#EXIT_HOOKS[@]} - 1; i >= 0; i--)); do eval "${EXIT_HOOKS[i]}" || true; done; }
 trap on_exit EXIT
 
 # lock_users: one users.sh at a time changes the user file, until it exits
