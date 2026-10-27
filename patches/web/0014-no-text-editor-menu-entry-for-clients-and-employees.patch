@@ -1,0 +1,64 @@
+diff --git a/packages/web-app-text-editor/src/index.ts b/packages/web-app-text-editor/src/index.ts
+index 12ad36a..c5f8250 100644
+--- a/packages/web-app-text-editor/src/index.ts
++++ b/packages/web-app-text-editor/src/index.ts
+@@ -7,6 +7,7 @@ import {
+   AppMenuItemExtension,
+   AppWrapperRoute,
+   defineWebApplication,
++  hasOcCustomFeature,
+   useOpenEmptyEditor,
+   useSpacesStore,
+   useUserStore
+@@ -125,7 +126,12 @@ export default defineWebApplication({
+ 
+     const menuItems = computed<AppMenuItemExtension[]>(() => {
+       const items: AppMenuItemExtension[] = []
+-      if (userStore.user && spacesStore.personalSpace) {
++      // oc-custom: not for Clients and Employees, whose personal space (if any) is disabled
++      if (
++        userStore.user &&
++        spacesStore.personalSpace &&
++        !hasOcCustomFeature('noPersonal', userStore.user)
++      ) {
+         items.push({
+           id: `app.${appInfo.id}.menuItem`,
+           type: 'appMenuItem',
+diff --git a/packages/web-app-text-editor/tests/unit/index.custom.spec.ts b/packages/web-app-text-editor/tests/unit/index.custom.spec.ts
+new file mode 100644
+index 0000000..8a71014
+--- /dev/null
++++ b/packages/web-app-text-editor/tests/unit/index.custom.spec.ts
+@@ -0,0 +1,32 @@
++import { mock } from 'vitest-mock-extended'
++import { unref } from 'vue'
++import { User } from '@opencloud-eu/web-client/graph/generated'
++import { SpaceResource } from '@opencloud-eu/web-client'
++import { useSpacesStore, useUserStore } from '@opencloud-eu/web-pkg'
++import { getComposableWrapper } from '@opencloud-eu/web-test-helpers'
++import app from '../../src/index'
++
++// oc-custom: no Text Editor entry in the app menu for Clients and Employees, whose
++// personal space (a User changed to one of them keeps theirs, disabled) can't take files
++
++vi.mock('@opencloud-eu/web-pkg', async (importOriginal) => ({
++  ...(await importOriginal<any>()),
++  useOpenEmptyEditor: () => ({ openEmptyEditor: vi.fn() })
++}))
++
++describe('Text editor app menu (oc-custom)', () => {
++  it.each([
++    ['User', 'd7beeea8-8ff4-406b-8fb6-ab2dd81e6b11', 1],
++    ['Client', '38f0649f-b600-4188-b138-fbd2c773cc43', 0],
++    ['Employee', '12047bc6-9aa3-49f6-8d78-e64b3065cd99', 0]
++  ])('with a personal space, a %s gets %s entries', (_, typeId, count) => {
++    getComposableWrapper(() => {
++      useUserStore().user = mock<User>({ appRoleAssignments: [{ id: typeId } as any] })
++      useSpacesStore().spaces = [
++        mock<SpaceResource>({ driveType: 'personal', isOwner: () => true })
++      ]
++      const { extensions } = app.setup({ applicationConfig: {} } as any)
++      expect(unref(extensions)).toHaveLength(count)
++    })
++  })
++})
