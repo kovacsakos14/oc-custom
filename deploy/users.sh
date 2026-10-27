@@ -41,8 +41,8 @@ EOF
 
 # token: makes this run's app token for admin. It's kept in memory only,
 # revoked at exit and expires after 10 minutes anyway, so nothing usable is
-# left behind. Called once before the command, not from api(): api() runs in
-# subshells.
+# left behind. Each command calls it once, after checking its arguments (a
+# refused command makes none), not from api(): api() runs in subshells.
 token() {
     local out i
     if [ -e .admin-token ]; then
@@ -189,6 +189,7 @@ valid_name() {
 
 cmd_list() {
     local oc au
+    token
     oc="$(api GET '/graph/v1.0/users?$expand=appRoleAssignments' | yq -p json \
         '.value[] | [.onPremisesSamAccountName, .displayName, (.mail // "-"), .accountEnabled, (.appRoleAssignments[0].appRoleId // "-")]
             | map(tostring | sub("[\t\n]"; " ")) | join("\t")')" # tabs and line breaks would shift the columns
@@ -236,6 +237,7 @@ cmd_add() {
         [ -n "$hash" ] || die "Couldn't hash the password"
         pw="$(head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n')"
     fi
+    token
     export Y_USER="$user" Y_NAME="$name" Y_EMAIL="$email" Y_HASH="$pw"
     body="$(echo '{}' | json '.onPremisesSamAccountName = strenv(Y_USER) | .displayName = strenv(Y_NAME)
         | .passwordProfile.password = strenv(Y_HASH) | .accountEnabled = false
@@ -267,6 +269,7 @@ cmd_passwd() {
     valid_name "$user"
     case "${2-}" in ""|--random) ;; *) die "passwd USER [--random]" ;; esac
     pw="$(read_password "${2-}")"
+    token
     if with_authelia; then
         hash="$(hash_password "$pw")"
         [ -n "$hash" ] || die "Couldn't hash the password"
@@ -301,6 +304,7 @@ cmd_role() {
     [ -n "$user" ] && [ -n "$role" ] || die "role USER user|admin|light|client|employee"
     valid_name "$user"
     rid="$(role_id "$role")"
+    token
     id="$(user_id "$user")"
     read -r drive state <<< "$(personal_drive "$id")" || true
     # These types have no personal space. One the user already has is disabled,
@@ -337,6 +341,7 @@ cmd_email() {
     [ -n "$user" ] && [ -n "$email" ] || die "email USER ADDRESS"
     valid_name "$user"
     export Y_EMAIL="$email"
+    token
     id="$(user_id "$user")"
     body="$(echo '{}' | json '.mail = strenv(Y_EMAIL)')"
     api PATCH "/graph/v1.0/users/$id" "$body" > /dev/null
@@ -349,6 +354,7 @@ cmd_enable() { # USER true|false
     [ -n "$user" ] || die "USER missing"
     valid_name "$user"
     export Y_FLAG="$on"
+    token
     id="$(user_id "$user")"
     body="$(echo '{}' | json '.accountEnabled = (strenv(Y_FLAG) == "true")')"
     api PATCH "/graph/v1.0/users/$id" "$body" > /dev/null
@@ -365,6 +371,7 @@ cmd_delete() {
         read -rp "Delete $user and their files? Type the username: " answer
         [ "$answer" = "$user" ] || die "Not deleted"
     fi
+    token
     id="$(user_id "$user")"
     api DELETE "/graph/v1.0/users/$id" > /dev/null
     echo "OpenCloud: deleted $user"
@@ -396,9 +403,6 @@ cmd_reset_2fa() {
 
 cmd="${1-help}"; shift || true
 case "$cmd" in help|-h|--help) ;; *) yq_start ;; esac
-case "$cmd" in
-    list|add|passwd|role|email|disable|enable|delete) token ;;
-esac
 case "$cmd" in
     list) cmd_list ;;
     add) cmd_add "$@" ;;
