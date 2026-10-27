@@ -65,8 +65,9 @@ Built into the image (from 7.2.4-6): no settings file and no environment variabl
 | 18 | **"Can't delete" can't replace a file:** the server refuses an upload over an existing file that has content (PUT, TUS, COPY onto it; renaming or moving onto a name already needed delete permission). An empty file may still be replaced (Windows Explorer and macOS Finder create files empty first). | the share role | `patches/reva/0003-…` |
 | 19 | **No "Replace" in the upload dialog for a file that can't be replaced:** when an upload's name exists and the file reports rename/move without write (`NV` without `W`, as on "Can't delete") and has content, the dialog offers Keep both and Skip only, and a "Replace" chosen for all conflicts isn't applied to it (it gets its own question). Upstream's roles keep their dialog. | everyone (follows the share) | `patches/web/0013-…` |
 | 20 | **No Text Editor in the app menu,** even for a User changed to Client or Employee: upstream shows it whenever there's a personal space, and their disabled one still counts (the entry would create a file in it). | Client, Employee | `patches/web/0014-…` |
+| 21 | **A failed sign-in offers "Log in again"** (from 7.2.4-8): the "Authentication failed" page (e.g. after an account was disabled, or the session ended at the identity provider) gets a "Log in again" button, instead of leaving the user on a page without a way out. It asks the identity provider for its sign-in form (`prompt=login`): the built-in one still has the old session and would otherwise answer with the same error again. The option to ask for it is in patch 12's file (`authService.loginUser`). | everyone | `patches/web/0015-…` |
 
-**Defaults in the image** (from 7.2.4-6; a compose file can override them): `FRONTEND_DISABLE_RADICALE=true` (no Calendar in the app menu: without a CalDAV server it leads nowhere) and `FRONTEND_CONFIGURABLE_NOTIFICATIONS=true` (the per-event notification table in Preferences).
+**Defaults in the image** (from 7.2.4-6; a compose file can override them): `FRONTEND_DISABLE_RADICALE=true` (no Calendar in the app menu: without a CalDAV server it leads nowhere), `FRONTEND_CONFIGURABLE_NOTIFICATIONS=true` (the per-event notification table in Preferences) and, from 7.2.4-8, `WEB_OPTION_DISABLE_FEEDBACK_LINK=true` (no "Give feedback" button in the top bar: it asks users for ideas on OpenCloud's own survey site).
 
 Everything else is upstream's: the image is the official one with only `/usr/bin/opencloud` replaced, built from the same sources and with the same toolchain and target. `opencloud version` and `status.php` report `7.2.4+custom.<build>`.
 
@@ -77,7 +78,7 @@ Everything else is upstream's: the image is the official one with only `/usr/bin
 ```yaml
 services:
   opencloud:
-    image: ghcr.io/kovacsakos14/oc-custom:7.2.4-7   # was: opencloudeu/opencloud:7.2.4
+    image: ghcr.io/kovacsakos14/oc-custom:7.2.4-8   # was: opencloudeu/opencloud:7.2.4
     volumes:
       - ./config:/etc/opencloud
       - ./data:/var/lib/opencloud
@@ -88,6 +89,7 @@ services:
 - **Update or roll back** by changing the tag, then `docker compose pull && docker compose up -d`.
 - **Tags never change** once published: `7.2.4-1`, `7.2.4-2`, … each mean one build. There's no `latest`, so a server only changes when you change its tag. For extra certainty, pin the digest as well (`…:7.2.4-1@sha256:…`).
 - **The image is public,** so servers pull it without logging in. It holds nothing secret: config and branding stay on each server.
+- **From 7.2.4-7 to 7.2.4-8:** change the tag. The feedback button in the top bar is gone (`WEB_OPTION_DISABLE_FEEDBACK_LINK=true` in the image; a compose file can set it to `false`), and the "Authentication failed" page has a "Log in again" button.
 - **From 7.2.4-6 to 7.2.4-7:** change the tag. With [`deploy/`](deploy/README.md), also take its new files, run `./setup.sh` and copy the rewritten SWAG site to SWAG again; `OC_ADMIN_PASSWORD` can then be emptied in `.env`; impersonation is off unless `.env` sets `AUTH_APP_ENABLE_IMPERSONATION=true`; the first `users.sh` run removes an old `.admin-token`, whose token should be deleted under admin's App Tokens. Users changed to Client or Employee keep their personal space but disabled (`users.sh role`).
 - **From 7.2.4-5 to 7.2.4-6:** give client accounts the Client type and staff accounts the Employee type, and share client folders as "Can't delete" (existing "Can upload" shares lose rename/move in the apps). Accounts left as User or User Light get upstream's web UI.
 
