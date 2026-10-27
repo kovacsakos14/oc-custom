@@ -1,5 +1,5 @@
 diff --git a/packages/web-app-files/src/views/spaces/DriveRedirect.vue b/packages/web-app-files/src/views/spaces/DriveRedirect.vue
-index 1a0602b..622cf84 100644
+index 1a0602b..5ddf92c 100644
 --- a/packages/web-app-files/src/views/spaces/DriveRedirect.vue
 +++ b/packages/web-app-files/src/views/spaces/DriveRedirect.vue
 @@ -6,11 +6,11 @@
@@ -16,15 +16,21 @@ index 1a0602b..622cf84 100644
  import omit from 'lodash-es/omit'
  import { RouteLocationRaw } from 'vue-router'
  
-@@ -34,6 +34,7 @@ export default defineComponent({
+@@ -34,8 +34,13 @@ export default defineComponent({
      const router = useRouter()
      const route = useRoute()
      const spacesStore = useSpacesStore()
 +    const { has } = useOcCustomFeatures()
  
      const personalSpace = computed(() => {
++      // oc-custom: Clients and Employees don't use a personal space, not even a disabled one
++      if (has('noPersonal')) {
++        return undefined
++      }
        return spacesStore.spaces.find((space) => space.driveType === 'personal')
-@@ -46,7 +47,12 @@ export default defineComponent({
+     })
+ 
+@@ -46,7 +51,12 @@ export default defineComponent({
      })
  
      if (!unref(personalSpace)) {
@@ -39,17 +45,18 @@ index 1a0602b..622cf84 100644
        const { params, query } = createFileRouteOptions(unref(personalSpace), {
          path: unref(itemPath)
 diff --git a/packages/web-app-files/tests/unit/views/spaces/DriveRedirect.spec.ts b/packages/web-app-files/tests/unit/views/spaces/DriveRedirect.spec.ts
-index f16fe0e..4ab0ab4 100644
+index f16fe0e..e966569 100644
 --- a/packages/web-app-files/tests/unit/views/spaces/DriveRedirect.spec.ts
 +++ b/packages/web-app-files/tests/unit/views/spaces/DriveRedirect.spec.ts
-@@ -1,5 +1,6 @@
+@@ -1,5 +1,7 @@
  import DriveRedirect from '../../../../src/views/spaces/DriveRedirect.vue'
  import { mock } from 'vitest-mock-extended'
 +import { User } from '@opencloud-eu/web-client/graph/generated'
++import { SpaceResource } from '@opencloud-eu/web-client'
  import {
    defaultPlugins,
    mount,
-@@ -15,9 +16,22 @@ describe('DriveRedirect view', () => {
+@@ -15,9 +17,33 @@ describe('DriveRedirect view', () => {
        name: 'files-spaces-projects'
      })
    })
@@ -63,17 +70,28 @@ index f16fe0e..4ab0ab4 100644
 +      name: 'files-shares-with-me'
 +    })
 +  })
++  it.each([
++    ['Client', '38f0649f-b600-4188-b138-fbd2c773cc43'],
++    ['Employee', '12047bc6-9aa3-49f6-8d78-e64b3065cd99']
++  ])('redirects a %s to "shared with me" even with a (disabled) personal space', (_, typeId) => {
++    const personal = mock<SpaceResource>({ driveType: 'personal' })
++    const { mocks } = getMountedWrapper({ typeId, spaces: [personal] })
++    expect(mocks.$router.replace).toHaveBeenCalledWith({
++      name: 'files-shares-with-me'
++    })
++  })
  })
  
 -function getMountedWrapper({ currentRouteName = 'files-spaces-generic' } = {}) {
 +function getMountedWrapper({
 +  currentRouteName = 'files-spaces-generic',
-+  typeId = undefined
-+}: { currentRouteName?: string; typeId?: string } = {}) {
++  typeId = undefined,
++  spaces = []
++}: { currentRouteName?: string; typeId?: string; spaces?: SpaceResource[] } = {}) {
    const mocks = {
      ...defaultComponentMocks({ currentRoute: mock<RouteLocation>({ name: currentRouteName }) })
    }
-@@ -26,7 +40,15 @@ function getMountedWrapper({ currentRouteName = 'files-spaces-generic' } = {}) {
+@@ -26,7 +52,16 @@ function getMountedWrapper({ currentRouteName = 'files-spaces-generic' } = {}) {
      mocks,
      wrapper: mount(DriveRedirect, {
        global: {
@@ -81,6 +99,7 @@ index f16fe0e..4ab0ab4 100644
 +        plugins: [
 +          ...defaultPlugins({
 +            piniaOptions: {
++              spacesState: { spaces },
 +              userState: typeId && {
 +                user: mock<User>({ appRoleAssignments: [{ id: typeId } as any] })
 +              }

@@ -36,9 +36,12 @@ DOMAIN2=plain.deploy.test  # without
 ADMIN_PASSWORD='Admin-pass1'
 
 fails=0
-ok() { echo "  ok    $*"; }
-bad() { echo "  FAIL  $*"; fails=$((fails + 1)); }
+# Each result shows how long its check or step took; T0 is set when it starts
+T0=$SECONDS
+ok() { printf '  ok    %4ss  %s\n' "$((SECONDS - T0))" "$*"; }
+bad() { printf '  FAIL  %4ss  %s\n' "$((SECONDS - T0))" "$*"; fails=$((fails + 1)); }
 check() { # description, shell code (run with this script's functions)
+    T0=$SECONDS
     if eval "$2" > /dev/null 2>&1; then ok "$1"; else bad "$1"; fi
 }
 
@@ -69,6 +72,7 @@ browser() { # script, env...
 step() { # description, browser script, env...
     local d="$1"; shift
     echo "  ..    $d"
+    T0=$SECONDS
     if browser "$@"; then ok "$d"; else bad "$d"; fi
 }
 
@@ -101,6 +105,21 @@ wait_up() { # domain, with Authelia
     return 1
 }
 
+user_token() { # user: a short-lived app token, as users.sh makes admin's
+    docker compose exec -T opencloud opencloud auth-app create --user-name "$1" --expiration 10m | sed -n 's/^ *token: //p'
+}
+admin_token() { user_token admin; }
+YQ_IMAGE="$(sed -n 's/^YQ_IMAGE=//p' "$repo/deploy/lib.sh")"
+yq_() { docker run --rm -i -e Y_ID "$YQ_IMAGE" -p json "$@"; } # Y_ID: for strenv() in the container
+personal_state() { # drive id: its state as the admin sees it (trashed when disabled)
+    curl_ -u "admin:$(admin_token)" "https://$DOMAIN/graph/v1.0/drives?%24filter=driveType%20eq%20%27personal%27" |
+        Y_ID="$1" yq_ '.value[] | select(.id == strenv(Y_ID)) | (.root.deleted.state // "enabled")'
+}
+link_opens() { # public link token: its folder opens with the link's password (207)
+    [ "$(curl_ -u "public:Link-Pass-1234!" -X PROPFIND -H "Depth: 0" -o /dev/null -w "%{http_code}" \
+        "https://$DOMAIN/dav/public-files/$1")" = 207 ]
+}
+
 logon() { # domain, user, password: the built-in sign-in's answer (200 ok, 204 refused)
     curl_ -o /dev/null -w '%{http_code}' -H 'Kopano-Konnect-XSRF: 1' -H "Referer: https://$1/signin/v1/identifier" \
         -H "Origin: https://$1" -H 'Content-Type: application/json' "https://$1/signin/v1/identifier/_/logon" \
@@ -124,14 +143,23 @@ docker run -d --name dtest-swag --network "$NET" --network-alias "$DOMAIN" --net
     -e PUID="$(id -u)" -e PGID="$(id -g)" -e TZ=Etc/UTC -e URL=deploy.test -e SUBDOMAINS=cloud,plain \
     -e ONLY_SUBDOMAINS=true -e VALIDATION=http -v "$WORK/swag:/config" "$SWAG_IMAGE" > /dev/null
 for i in $(seq 60); do docker logs dtest-swag 2>&1 | grep -q 'Server ready' && break; sleep 2; done
+check "setup.sh refuses an unknown SMTP_ENCRYPTION" \
+    '(cd "$WORK/a" && sed -i.bak "s/^SMTP_ENCRYPTION=.*/SMTP_ENCRYPTION=tls/" .env; ! ./setup.sh; s=$?; mv .env.bak .env; exit $s)'
 check "SWAG started without Let's Encrypt and accepts both sites (nginx -t)" 'docker exec dtest-swag nginx -t'
 
-echo "== With Authelia ($DOMAIN)"
+echo "== With Authelia ($DOMAIN), at ${SECONDS}s"
 cd "$WORK/a"
 check "docker compose up -d" "docker compose up -d"
 check "OpenCloud and Authelia answer through SWAG" 'wait_up "$DOMAIN" yes'
+check "the admin password isn't in OpenCloud's environment, and its one-time file is gone" \
+    '! docker inspect dtest-opencloud --format "{{json .Config.Env}}" | grep -qF "$ADMIN_PASSWORD" && [ ! -e config/.admin-password ]'
 check "OpenCloud's sign-in configuration is Authelia's" \
     'curl_ "https://$DOMAIN/.well-known/openid-configuration" | grep -q "\"issuer\":\"https://$DOMAIN/authelia\""'
+check "Authelia logs the client's address, not one the client sent (X-Forwarded-For)" \
+    'curl_ -H "X-Forwarded-For: 6.6.6.6" -H "Content-Type: application/json" -d "{\"username\":\"xff-probe\",\"password\":\"x\"}" \
+        "https://$DOMAIN/authelia/api/firstfactor" > /dev/null; sleep 1
+     lines="$(docker compose logs authelia | grep xff-probe)"
+     grep -q remote_ip <<< "$lines" && ! grep -q 6.6.6.6 <<< "$lines"'
 check "OpenCloud runs notifications (SMTP set) and not its own sign-in (idp)" \
     'services="$(docker compose exec -T opencloud opencloud list)"; grep -q " notifications " <<< "$services" && ! grep -q " idp " <<< "$services"'
 check "users.sh email admin" './users.sh email admin admin@deploy.test'
@@ -139,10 +167,18 @@ check "Authelia has no OIDC sign-out endpoint; the web signs out at its /logout 
     '! curl_ "https://$DOMAIN/.well-known/openid-configuration" | grep -q end_session_endpoint &&
      curl_ "https://$DOMAIN/config.json" | grep -Eq "\"logoutUrl\": ?\"https://$DOMAIN/authelia/logout\\?rd="'
 check "no Calendar (capability support-radicale off)" \
-    'curl_ -u "admin:$(cat .admin-token)" "https://$DOMAIN/ocs/v1.php/cloud/capabilities?format=json" | grep -Eq "\"support-radicale\": ?false"'
+    'curl_ -u "admin:$(admin_token)" "https://$DOMAIN/ocs/v1.php/cloud/capabilities?format=json" | grep -Eq "\"support-radicale\": ?false"'
+check "users.sh add refuses a password that's too short" '! echo ab | ./users.sh add shorty'
 check "users.sh add alice (password on stdin)" 'echo Alice-pass1 | ./users.sh add alice --name "Alice Example" --email alice@deploy.test'
+check "impersonation is off: admin's token can't make one for alice" \
+    '[ "$(curl_ -u "admin:$(admin_token)" -X POST -o /dev/null -w "%{http_code}" \
+        "https://$DOMAIN/auth-app/tokens?expiry=10m&userName=alice")" -ge 400 ]'
 check "users.sh add bob as User Light (--random)" './users.sh add bob --role light --email bob@deploy.test --random < /dev/null'
 check "users.sh disable bob" './users.sh disable bob'
+check "two users.sh add at the same time both land in Authelia's file" \
+    'echo Gina-pass1 | ./users.sh add gina & p=$!; echo Hank-pass1 | ./users.sh add hank && wait $p &&
+     grep -q "^  gina:" authelia/users/users_database.yml && grep -q "^  hank:" authelia/users/users_database.yml &&
+     ./users.sh delete gina < /dev/null && ./users.sh delete hank < /dev/null'
 check "users.sh add erin as Client (--random)" './users.sh add erin --role client --email erin@deploy.test --random < /dev/null'
 check "users.sh add fred as Employee (--random)" './users.sh add fred --role employee --email fred@deploy.test --random < /dev/null'
 list="$(./users.sh list)"
@@ -161,29 +197,55 @@ step "admin: 2FA registered at the first sign-in, removed and registered again o
     ADMIN_PASSWORD="$ADMIN_PASSWORD" ADMIN_EMAIL=admin@deploy.test
 check "users.sh reset-2fa admin" './users.sh reset-2fa admin'
 step "admin is asked to register 2FA again" admin-reset.js ADMIN_PASSWORD="$ADMIN_PASSWORD"
+# Changing a User to a type without a personal space disables it, with the links from it
+check "alice (User) shares a folder in her personal space by a public link" \
+    'A="alice:$(user_token alice)"
+     space="$(curl_ -u "$A" "https://$DOMAIN/graph/v1.0/me/drives?%24filter=driveType%20eq%20%27personal%27" | yq_ ".value[0].id")"
+     curl_ -u "$A" -X MKCOL "https://$DOMAIN/dav/spaces/$space/linked" &&
+     item="$(curl_ -u "$A" -X PROPFIND -H "Depth: 0" "https://$DOMAIN/dav/spaces/$space/linked" \
+        -d "<d:propfind xmlns:d=\"DAV:\" xmlns:oc=\"http://owncloud.org/ns\"><d:prop><oc:fileid/></d:prop></d:propfind>" |
+        sed -n "s|.*<oc:fileid>\([^<]*\)</oc:fileid>.*|\1|p")" &&
+     link="$(curl_ -u "$A" -H "Content-Type: application/json" -d "{\"type\":\"view\",\"password\":\"Link-Pass-1234!\"}" \
+        "https://$DOMAIN/graph/v1beta1/drives/${space//\$/%24}/items/${item//\$/%24}/createLink" | yq_ ".link.webUrl")" &&
+     link="${link##*/}" && [ -n "$link" ] && link_opens "$link"'
+check "users.sh role alice client disables her personal space; the link stops working" \
+    './users.sh role alice client < /dev/null && [ "$(personal_state "$space")" = trashed ] && ! link_opens "$link"'
+check "alice can't enable her personal space herself (patches/reva/0002)" \
+    '[ "$(curl_ -u "$A" -X PATCH -H "Restore: T" -H "Content-Type: application/json" -d "{}" -o /dev/null -w "%{http_code}" \
+        "https://$DOMAIN/graph/v1.0/drives/${space//\$/%24}")" -ge 400 ] && [ "$(personal_state "$space")" = trashed ]'
+check "users.sh role alice user enables it again; the link works again" \
+    './users.sh role alice user < /dev/null && [ "$(personal_state "$space")" = enabled ] && link_opens "$link"'
 admins() { grep -A8 "^  $1:" authelia/users/users_database.yml | grep -q -- '- admins'; }
 check "users.sh role alice admin puts her in admins" './users.sh role alice admin && admins alice'
 check "users.sh role alice user takes her out" './users.sh role alice user && ! admins alice'
+check "users.sh refuses the usernames . and .." '! ./users.sh disable .. && ! ./users.sh disable .'
 check "users.sh role alice boss is refused" '! ./users.sh role alice boss'
 check "users.sh delete bob (both sides)" \
     './users.sh delete bob < /dev/null && ! ./users.sh list | grep -q "^bob " && ! grep -q "^  bob:" authelia/users/users_database.yml'
 check "users.sh delete erin and fred" './users.sh delete erin < /dev/null && ./users.sh delete fred < /dev/null'
 # A user made in OpenCloud only (its web UI, or before Authelia): passwd adds them to Authelia
 check "a user created in OpenCloud only gets an Authelia entry from users.sh passwd" \
-    'curl_ -u "admin:$(cat .admin-token)" -H "Content-Type: application/json" -o /dev/null -w "%{http_code}" \
+    'curl_ -u "admin:$(admin_token)" -H "Content-Type: application/json" -o /dev/null -w "%{http_code}" \
         -d "{\"onPremisesSamAccountName\":\"dave\",\"displayName\":\"Dave\",\"mail\":\"dave@deploy.test\",\"passwordProfile\":{\"password\":\"x-unused-1\"}}" \
         "https://$DOMAIN/graph/v1.0/users" | grep -q 201 && echo Dave-pass1 | ./users.sh passwd dave &&
      curl_ -H "Content-Type: application/json" -d "{\"username\":\"dave\",\"password\":\"Dave-pass1\"}" \
         "https://$DOMAIN/authelia/api/firstfactor" | grep -q "\"status\":\"OK\""'
+check "users.sh leaves no app token on disk" '[ ! -e .admin-token ]'
+check "users.sh revokes its app token when it's done" \
+    'T="$(admin_token)"; n="$(curl_ -u "admin:$T" "https://$DOMAIN/auth-app/tokens" | yq_ length)" &&
+     ./users.sh list > /dev/null && [ "$(curl_ -u "admin:$T" "https://$DOMAIN/auth-app/tokens" | yq_ length)" = "$n" ]'
 check "the user file is private (600)" '[ "$(stat -c %a authelia/users/users_database.yml)" = 600 ]'
 docker compose down > /dev/null 2>&1
 
-echo "== Without Authelia ($DOMAIN2)"
+echo "== Without Authelia ($DOMAIN2), at ${SECONDS}s"
 cd "$WORK/b"
 check "docker compose up -d" "docker compose up -d"
 check "OpenCloud answers through SWAG" 'wait_up "$DOMAIN2" no'
 check "no Authelia container; OpenCloud runs its own sign-in (idp)" \
     '! docker compose ps --services | grep -q authelia && docker compose exec -T opencloud opencloud list | grep -q " idp "'
+# the sign-in service may still be starting right after the first answer
+check "admin signs in with the password from the first start (200)" \
+    'for i in $(seq 15); do [ "$(logon "$DOMAIN2" admin "$ADMIN_PASSWORD")" = 200 ] && break; sleep 2; done; [ "$i" -lt 15 ] || [ "$(logon "$DOMAIN2" admin "$ADMIN_PASSWORD")" = 200 ]'
 check "the web gets no password link (config.json)" '! curl_ "https://$DOMAIN2/config.json" | grep -q accountEditLink'
 check "users.sh add carol" 'echo Carol-pass1 | ./users.sh add carol --email carol@deploy.test'
 check "carol signs in on OpenCloud's own sign-in (200)" '[ "$(logon "$DOMAIN2" carol Carol-pass1)" = 200 ]'
@@ -196,5 +258,6 @@ step "carol: OpenCloud's own sign-in page, Change password opens its dialog" bui
 docker compose down > /dev/null 2>&1
 
 echo
+echo "Took ${SECONDS}s"
 if [ "$fails" = 0 ]; then echo "All checks passed"; else echo "$fails check(s) failed; screenshots in $WORK/shots (with --keep)"; fi
 [ "$fails" = 0 ]

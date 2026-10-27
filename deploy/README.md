@@ -31,7 +31,7 @@ Users are always created in OpenCloud. With Authelia they also need an entry in 
 3. **`./setup.sh`**: checks `.env`, creates the folders and Authelia's secrets, writes Authelia's user file with the admin, and writes the SWAG site `swag/<OC_STACK>.subdomain.conf`. It never replaces what exists, so it's safe to run again.
 4. **SWAG:** copy `swag/<OC_STACK>.subdomain.conf` into SWAG's `config/nginx/proxy-confs/`, then `docker restart swag` (or whatever your SWAG container is called). Don't add SWAG's own `authelia-*.conf` includes to this site: those are for protecting other apps with Authelia, not for this.
 5. **Start:** `docker compose up -d`. The first start takes a minute (OpenCloud creates its config).
-6. **Sign in** at `https://<your domain>` as `admin` with `OC_ADMIN_PASSWORD`. With Authelia, the admin is asked to register an authenticator app (e.g. Google Authenticator, Aegis, 1Password) first: Authelia e-mails a one-time code to `ADMIN_EMAIL` to confirm it's you, then shows a QR code.
+6. **Sign in** at `https://<your domain>` as `admin` with `OC_ADMIN_PASSWORD`. Then keep the password elsewhere and empty `OC_ADMIN_PASSWORD` in `.env`: only the first start uses it (`setup.sh` hands it over in `config/.admin-password`, which OpenCloud deletes after creating its configuration), and it stays out of the container's environment. With Authelia, the admin is asked to register an authenticator app (e.g. Google Authenticator, Aegis, 1Password) first: Authelia e-mails a one-time code to `ADMIN_EMAIL` to confirm it's you, then shows a QR code.
 
 The desktop and mobile apps connect to `https://<your domain>` as usual. They open the sign-in in the browser; with Authelia there's a consent page once when an account is added ("allow OpenCloud Desktop to access your account").
 
@@ -48,10 +48,14 @@ The desktop and mobile apps connect to `https://<your domain>` as usual. They op
 ./users.sh reset-2fa anna                  # lost phone: removes her 2FA devices
 ```
 - A password can come from stdin instead of the prompt: `echo 'secret' | ./users.sh passwd anna`. `--random` makes one up and shows it once.
+- Passwords need at least 3 characters, in `users.sh`, `setup.sh` and (with Authelia) on Authelia's pages. That's deliberately low for now: raise `PASSWORD_MIN_LENGTH` in `lib.sh` and `password_policy` in `authelia/configuration.yml` together.
 - **Roles:** `client` and `employee` are oc-custom's file-server types (no personal space; clients get folders shared as "Can't delete", staff as "Can edit"; see the [main README](../README.md#user-types-and-the-cant-delete-role)). `user`, `admin` and `light` are upstream's (User, Admin, User Light) with upstream's web UI. `add` without `--role` makes a `user`.
 - **Admins** (`--role admin`) are in Authelia's `admins` group, so they need 2FA. Changing the role with `users.sh role` changes both.
+- **Changing a `user` or `admin` to `client`, `employee` or `light`** disables their personal space (`users.sh role` asks first): the files stay, but they can't reach them, and their shares and public links from it stop working. Only an admin can enable it again (oc-custom's reva patch 2); `users.sh role` back to `user` or `admin` does, and the shares and links work again. To get rid of the files for good, delete the space in Admin settings → Spaces.
 - With Authelia, OpenCloud's own password for each user is random and unused; passwords are checked by Authelia only.
-- `users.sh` uses an app token for `admin`, created on first use and kept in `.admin-token` (private, valid one year; delete the file to get a new one, and remove the old token under the admin's Settings → App Tokens).
+- `users.sh` starts one helper container (the pinned yq image) per run and removes it at exit; Authelia's password hashes are made in the running Authelia container. On a small VM an `add` with Authelia takes about 8–14 s.
+- `users.sh` uses an app token for `admin` that it makes at each run, keeps in memory and revokes when it's done (it would expire after 10 minutes anyway). Older versions kept one in `.admin-token` for a year; `users.sh` removes that file, and the old token should be deleted under the admin's Settings → App Tokens.
+- Impersonation (an admin's app token making tokens for other users) is off; `AUTH_APP_ENABLE_IMPERSONATION=true` in `.env` turns it on for management tools that need it. `users.sh` doesn't.
 - Users created in OpenCloud's web UI (Admin settings → Users) exist only in OpenCloud. With Authelia they can't sign in until they have an entry in Authelia's file: create them with `users.sh` instead.
 
 **What users see:** Clients and Employees land on "Shared with me"; their menu is Shares and Deleted files, with no Spaces entry. Admins and upstream's types see upstream's web (they land on Personal). Nobody has Calendar in the app menu (the image's default).

@@ -31,11 +31,13 @@ run() { # image, workdir (under upstream/), command
 
 "$repo/scripts/fetch"
 "$repo/scripts/apply"
+"$repo/scripts/check-upstream"
 
 # 1. The patched web, as upstream packages it (Makefile.release: build + copy-config),
-# kept in out/web-dist. Skipped when that was built from the same version and
-# patches (CI restores it from its cache).
-web_key="$WEB_VERSION-$(cat "$repo"/patches/web/*.patch | sha256sum | cut -c1-16)"
+# kept in out/web-dist. Skipped when that was built from the same version,
+# patches and toolchain (node image, pnpm) (CI restores it from its cache).
+web_key="$WEB_VERSION-$({ printf '%s\n' "$NODE_IMAGE" "$PNPM_VERSION" "$PNPM_SHA512"
+    cat "$repo"/patches/web/*.patch; } | sha256sum | cut -c1-16)"
 web_dist="$repo/out/web-dist"
 if [ "$(cat "$web_dist/.oc-custom-key" 2>/dev/null)" = "$web_key" ]; then
     echo "web: out/web-dist is up to date ($web_key)"

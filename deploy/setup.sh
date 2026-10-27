@@ -6,24 +6,53 @@ set -euo pipefail
 cd "$(dirname "$0")"
 . ./lib.sh
 
-for k in OC_STACK OC_DOMAIN OC_ADMIN_PASSWORD OC_IMAGE SWAG_NETWORK; do
+for k in OC_STACK OC_DOMAIN OC_IMAGE SWAG_NETWORK; do
     [ -n "$(conf "$k")" ] || die "Set $k in .env"
 done
+# The admin password is needed until the first start (and Authelia's first
+# user file); after that it can go from .env
+first_start=""
+[ -f config/opencloud.yaml ] || first_start=1
+if [ -n "$first_start" ] || { with_authelia && [ ! -f "$USERS_FILE" ]; }; then
+    admin_password="$(conf OC_ADMIN_PASSWORD)"
+    [ -n "$admin_password" ] || die "Set OC_ADMIN_PASSWORD in .env"
+    [ "${#admin_password}" -ge "$PASSWORD_MIN_LENGTH" ] ||
+        die "OC_ADMIN_PASSWORD needs at least $PASSWORD_MIN_LENGTH characters"
+fi
 case "$(conf OC_STACK)" in *[!a-z0-9_-]*) die "OC_STACK: lowercase letters, digits, - and _ only" ;; esac
 case "$(conf OC_DOMAIN)" in *[!A-Za-z0-9.-]*) die "OC_DOMAIN: a host name only, e.g. cloud.example.com" ;; esac
+if [ -n "$(conf SMTP_HOST)" ]; then
+    case "$(conf SMTP_ENCRYPTION)" in
+        starttls|ssltls|none) ;;
+        *) die "SMTP_ENCRYPTION: starttls, ssltls or none (is: '$(conf SMTP_ENCRYPTION)')" ;;
+    esac
+fi
 if with_authelia; then
     for k in AUTHELIA_IMAGE ADMIN_EMAIL; do [ -n "$(conf "$k")" ] || die "Set $k in .env"; done
 fi
 chmod 600 .env
 
 # The user running this owns everything; OpenCloud and Authelia run as it
-if [ -z "$(conf PUID)" ] || [ -z "$(conf PGID)" ]; then
-    sed -i "s/^PUID=.*/PUID=$(id -u)/; s/^PGID=.*/PGID=$(id -g)/" .env
-    echo "PUID=$(id -u), PGID=$(id -g) written to .env"
-fi
+for k in PUID PGID; do
+    [ -z "$(conf "$k")" ] || continue
+    v="$([ "$k" = PUID ] && id -u || id -g)"
+    # the line from .env.example, or a new one when it isn't there
+    if grep -q "^$k=" .env; then
+        sed -i "s/^$k=.*/$k=$v/" .env
+    else
+        [ -z "$(tail -c 1 .env)" ] || echo >> .env # .env may not end in a newline
+        echo "$k=$v" >> .env
+    fi
+    echo "$k=$v written to .env"
+done
 
 # Docker would create the branding mount point inside data/ as root
 mkdir -p config data/web/assets/themes/_branding branding swag
+
+# For OpenCloud's first start, which deletes it (compose.yaml)
+if [ -n "$first_start" ]; then
+    (umask 077; printf '%s' "$(conf OC_ADMIN_PASSWORD)" > config/.admin-password)
+fi
 
 docker network inspect "$(conf SWAG_NETWORK)" > /dev/null 2>&1 ||
     echo "Warning: no Docker network '$(conf SWAG_NETWORK)' (SWAG_NETWORK); docker network ls lists them" >&2
@@ -56,8 +85,9 @@ if with_authelia; then
         Y_HASH="$(hash_password "$(conf OC_ADMIN_PASSWORD)")"
         export Y_HASH
         [ -n "$Y_HASH" ] || die "Couldn't hash the admin's password"
-        printf 'users: {}\n' | yq '.users[strenv(Y_USER)] = {"displayname": strenv(Y_NAME),
-            "email": strenv(Y_EMAIL), "password": strenv(Y_HASH), "disabled": false, "groups": ["admins"]}' | write_users
+        yq_start
+        update_users '.users[strenv(Y_USER)] = {"displayname": strenv(Y_NAME),
+            "email": strenv(Y_EMAIL), "password": strenv(Y_HASH), "disabled": false, "groups": ["admins"]}'
         echo "Wrote $USERS_FILE with admin (group admins: 2FA required)"
     fi
 fi
@@ -68,6 +98,8 @@ Next:
 1. Copy $site to SWAG's config/nginx/proxy-confs/ and restart SWAG.
 2. docker compose up -d
 3. Open https://$(conf OC_DOMAIN) and sign in as admin with OC_ADMIN_PASSWORD.
+   Keep the password somewhere safe (a password manager), then remove it from
+   .env: nothing reads it there after the first start.
 EOF
 if with_authelia; then
     cat <<EOF

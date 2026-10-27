@@ -10,7 +10,7 @@ ROLE_USER=d7beeea8-8ff4-406b-8fb6-ab2dd81e6b11
 ROLE_LIGHT=38071a68-456a-4553-846a-fa67bf5596cc # User Light: no personal space
 ROLE_CLIENT=38f0649f-b600-4188-b138-fbd2c773cc43   # oc-custom's Client: shared folders, language only
 ROLE_EMPLOYEE=12047bc6-9aa3-49f6-8d78-e64b3065cd99 # oc-custom's Employee: shared folders, e-mail settings
-TOKEN_FILE=.admin-token
+ADMIN_TOKEN=""
 
 usage() {
     cat <<'EOF'
@@ -23,7 +23,10 @@ Usage: ./users.sh COMMAND [USER] [OPTIONS]
                                 (--random: makes one up and shows it)
   passwd USER [--random]        Sets a new password
   role USER ROLE                Changes the role: user, admin (2FA with Authelia),
-                                light, client or employee
+                                light, client or employee. To light, client or
+                                employee: disables the user's personal space
+                                (files kept; shares and links from it stop);
+                                back to user or admin: enables it again
   email USER ADDRESS            Changes the e-mail address
   disable USER, enable USER     Blocks or allows signing in
   delete USER                   Deletes the user (their files too)
@@ -36,53 +39,92 @@ EOF
 
 # --- OpenCloud's API, as admin with an app token, from inside its container
 
+# token: makes this run's app token for admin. It's kept in memory only,
+# revoked at exit and expires after 10 minutes anyway, so nothing usable is
+# left behind. Each command calls it once, after checking its arguments (a
+# refused command makes none), not from api(): api() runs in subshells.
 token() {
-    if [ ! -s "$TOKEN_FILE" ]; then
-        local out i
-        for i in 1 2 3 4 5; do
-            out="$(docker compose exec -T opencloud opencloud auth-app create --user-name admin --expiration 8760h 2>&1)" && break
-            sleep 5
-        done
-        (umask 077; printf '%s\n' "$out" | sed -n 's/^ *token: //p' > "$TOKEN_FILE")
-        [ -s "$TOKEN_FILE" ] || die "Couldn't create an app token for admin: $out"
+    local out i
+    if [ -e .admin-token ]; then
+        # users.sh before 7.2.4-7 kept a token here, valid for a year
+        rm -f .admin-token
+        echo "Removed .admin-token (an older users.sh's token). Its token stays valid until it expires: delete it under admin's Settings -> App Tokens." >&2
     fi
-    cat "$TOKEN_FILE"
+    for i in 1 2 3 4 5; do
+        # < /dev/null: this runs before the command, and a password piped to
+        # users.sh is still waiting on stdin (docker compose exec would read it)
+        out="$(docker compose exec -T opencloud opencloud auth-app create --user-name admin --expiration 10m 2>&1 < /dev/null)" && break
+        sleep 5
+    done
+    ADMIN_TOKEN="$(printf '%s\n' "$out" | sed -n 's/^ *token: //p')"
+    [ -n "$ADMIN_TOKEN" ] || die "Couldn't create an app token for admin: $out"
+    EXIT_HOOKS+=(revoke_token)
+}
+
+revoke_token() {
+    local q
+    q="$(Y_TOKEN="$ADMIN_TOKEN" yq -n 'strenv(Y_TOKEN) | @uri')" &&
+        (api DELETE "/auth-app/tokens?token=$q" > /dev/null 2>&1) ||
+        echo "Note: couldn't revoke this run's app token for admin; it expires within 10 minutes" >&2
 }
 
 # cfg_quote: a value for curl's config file (in double quotes)
 cfg_quote() { printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'; }
 
-# api METHOD PATH [JSON]: the response body on stdout; fails on HTTP >= 300.
-# The token and the body go through curl's config on stdin, not its command line.
+# api METHOD PATH [JSON [HEADER]]: the response body on stdout; fails on HTTP >= 300.
+# The token, the address and the body go through curl's config on stdin, not
+# its command line.
 api() {
-    local method="$1" path="$2" body="${3-}" out code retry
-    for retry in 1 2; do
-        out="$({
-            printf 'user = "admin:%s"\n' "$(cfg_quote "$(token)")"
-            [ -z "$body" ] || printf 'data-raw = "%s"\n' "$(cfg_quote "$body")"
-        } | docker compose exec -T opencloud curl -sS -K - -X "$method" -H 'Content-Type: application/json' \
-            -w '\n%{http_code}' "http://127.0.0.1:9200$path")"
-        code="${out##*$'\n'}"
-        out="${out%$'\n'*}"
-        # A stale token (revoked, expired, or a new server): make a new one once
-        if [ "$code" = 401 ] && [ "$retry" = 1 ]; then rm -f "$TOKEN_FILE"; continue; fi
-        break
-    done
+    local method="$1" path="$2" body="${3-}" header="${4-}" out code
+    [ -n "$ADMIN_TOKEN" ] || die "No app token (call token first)"
+    out="$({
+        printf 'user = "admin:%s"\n' "$(cfg_quote "$ADMIN_TOKEN")"
+        printf 'url = "%s"\n' "$(cfg_quote "http://127.0.0.1:9200$path")"
+        [ -z "$body" ] || printf 'data-raw = "%s"\n' "$(cfg_quote "$body")"
+        [ -z "$header" ] || printf 'header = "%s"\n' "$(cfg_quote "$header")"
+    } | docker compose exec -T opencloud curl -sS -K - -X "$method" -H 'Content-Type: application/json' \
+        -w '\n%{http_code}')" ||
+        die "OpenCloud: $method ${path%%\?*}: no answer (is the opencloud container running? docker compose ps)"
+    code="${out##*$'\n'}"
+    out="${out%$'\n'*}"
     [ "$code" -lt 300 ] 2>/dev/null || die "OpenCloud: $method $path: HTTP $code $out"
     printf '%s' "$out"
 }
 
 json() { yq -p json -o json -I0 "$@"; } # JSON in, compact JSON out
 
-user_id() { api GET "/graph/v1.0/users/$1" | yq -p json '.id'; }
+# user_id USER: the user's id. Assign it (id="$(user_id …)") before using it:
+# inside another command's arguments a failure wouldn't stop the script.
+user_id() {
+    local id
+    id="$(api GET "/graph/v1.0/users/$1" | yq -p json '.id // ""')" || exit 1 # api said why
+    [ -n "$id" ] || die "OpenCloud: no id for $1"
+    printf '%s' "$id"
+}
 
 set_role() { # USER ROLE_ID
-    local id app
+    local id
     id="$(user_id "$1")"
-    app="$(api GET /graph/v1.0/applications | yq -p json '.value[0].id')"
-    export Y_ID="$id" Y_APP="$app" Y_ROLE="$2"
-    api POST "/graph/v1.0/users/$id/appRoleAssignments" \
-        "$(echo '{}' | json '.principalId = strenv(Y_ID) | .resourceId = strenv(Y_APP) | .appRoleId = strenv(Y_ROLE)')" > /dev/null
+    set_role_id "$id" "$2"
+}
+
+set_role_id() { # USER_ID ROLE_ID
+    local app body
+    # Checked here: OpenCloud accepts an assignment with empty ids, and leaves the user without a role
+    app="$(api GET /graph/v1.0/applications | yq -p json '.value[0].id // ""')" || app=""
+    [ -n "$app" ] || die "OpenCloud: no application to assign the role from"
+    export Y_ID="$1" Y_APP="$app" Y_ROLE="$2"
+    body="$(echo '{}' | json '.principalId = strenv(Y_ID) | .resourceId = strenv(Y_APP) | .appRoleId = strenv(Y_ROLE)')" ||
+        die "Couldn't build the role assignment"
+    api POST "/graph/v1.0/users/$1/appRoleAssignments" "$body" > /dev/null
+}
+
+# personal_drive USER_ID: "DRIVE_ID STATE" of the user's personal space (STATE
+# is trashed when it's disabled), nothing when they have none
+personal_drive() {
+    export Y_ID="$1"
+    api GET '/graph/v1.0/drives?$filter=driveType%20eq%20%27personal%27' |
+        yq -p json '.value[] | select(.owner.user.id == strenv(Y_ID)) | .id + " " + (.root.deleted.state // "")'
 }
 
 role_id() {
@@ -103,7 +145,7 @@ users_yaml() { [ -f "$USERS_FILE" ] || die "No $USERS_FILE: run ./setup.sh"; cat
 # edit_user USER EXPRESSION: applies a yq expression to .users[USER]
 edit_user() {
     export Y_USER="$1"
-    users_yaml | yq ".users[strenv(Y_USER)] |= ($2)" | write_users
+    update_users ".users[strenv(Y_USER)] |= ($2)"
 }
 
 has_user() {
@@ -133,27 +175,33 @@ read_password() { # [--random]: prints the password
         IFS= read -r p || true
     fi
     [ -n "$p" ] || die "Empty password"
+    [ "${#p}" -ge "$PASSWORD_MIN_LENGTH" ] || die "The password needs at least $PASSWORD_MIN_LENGTH characters"
     printf '%s' "$p"
 }
 
 valid_name() {
     [[ "$1" =~ ^[A-Za-z0-9_.@-]+$ ]] || die "Usernames may only contain letters, digits and _ . @ -"
+    # . and .. would be other paths in OpenCloud's API
+    [[ "$1" != .* ]] || die "Usernames can't start with a dot"
 }
 
 # --- Commands
 
 cmd_list() {
     local oc au
+    token
     oc="$(api GET '/graph/v1.0/users?$expand=appRoleAssignments' | yq -p json \
-        '.value[] | [.onPremisesSamAccountName, .displayName, (.mail // "-"), .accountEnabled, (.appRoleAssignments[0].appRoleId // "-")] | map(tostring) | join("\t")')"
+        '.value[] | [.onPremisesSamAccountName, .displayName, (.mail // "-"), .accountEnabled, (.appRoleAssignments[0].appRoleId // "-")]
+            | map(tostring | sub("[\t\n]"; " ")) | join("\t")')" # tabs and line breaks would shift the columns
     if with_authelia; then
         au="$(users_yaml | yq '.users | to_entries | .[] | [.key, (.value.disabled // false), ((.value.groups // []) | join(",") | select(. != "") // "-")] | map(tostring) | join("\t")')"
     else
         au=""
     fi
-    printf '%s\n' "$oc" | awk -F'\t' -v au="$au" -v a="$ROLE_ADMIN" -v u="$ROLE_USER" -v l="$ROLE_LIGHT" -v c="$ROLE_CLIENT" -v e="$ROLE_EMPLOYEE" -v with="$(with_authelia && echo 1)" '
+    # Authelia's rows through the environment: awk -v would turn \ in names into escapes
+    printf '%s\n' "$oc" | AU="$au" awk -F'\t' -v a="$ROLE_ADMIN" -v u="$ROLE_USER" -v l="$ROLE_LIGHT" -v c="$ROLE_CLIENT" -v e="$ROLE_EMPLOYEE" -v with="$(with_authelia && echo 1)" '
         BEGIN {
-            n = split(au, rows, "\n")
+            n = split(ENVIRON["AU"], rows, "\n")
             for (i = 1; i <= n; i++) { split(rows[i], f, "\t"); if (f[1] != "") { off[f[1]] = f[2]; groups[f[1]] = f[3] } }
             role[a] = "admin"; role[u] = "user"; role[l] = "light"; role[c] = "client"; role[e] = "employee"
             printf "%-20s %-24s %-28s %-8s %-8s %s\n", "USER", "NAME", "E-MAIL", "ROLE", "ENABLED", (with ? "AUTHELIA" : "")
@@ -166,11 +214,12 @@ cmd_list() {
 }
 
 cmd_add() {
-    local user="${1-}" name="" email="" role=user random="" pw body hash rid
+    local user="${1-}" name="" email="" role=user random="" pw body hash rid id
     [ -n "$user" ] || die "add USER"; shift
     valid_name "$user"
     while [ $# -gt 0 ]; do
         case "$1" in
+            --name|--email|--role) [ $# -ge 2 ] || die "$1 needs a value" ;;&
             --name) name="$2"; shift 2 ;;
             --email) email="$2"; shift 2 ;;
             --role) role="$2"; shift 2 ;;
@@ -188,27 +237,39 @@ cmd_add() {
         [ -n "$hash" ] || die "Couldn't hash the password"
         pw="$(head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n')"
     fi
+    token
     export Y_USER="$user" Y_NAME="$name" Y_EMAIL="$email" Y_HASH="$pw"
     body="$(echo '{}' | json '.onPremisesSamAccountName = strenv(Y_USER) | .displayName = strenv(Y_NAME)
-        | .passwordProfile.password = strenv(Y_HASH) | .accountEnabled = true
+        | .passwordProfile.password = strenv(Y_HASH) | .accountEnabled = false
         | (if strenv(Y_EMAIL) != "" then .mail = strenv(Y_EMAIL) else . end)')"
-    api POST /graph/v1.0/users "$body" > /dev/null
+    # Created disabled and enabled once it has its role: until then it's a User
+    # (personal space, sharing, links). If that fails, the account goes again.
+    # The steps run in subshells, so a failing one returns instead of exiting.
+    id="$(api POST /graph/v1.0/users "$body" | yq -p json '.id // ""')"
+    [ -n "$id" ] || die "OpenCloud: created $user, but got no id back; check ./users.sh list"
+    if ! { { [ "$role" = user ] || (set_role_id "$id" "$rid"); } &&
+        (api PATCH "/graph/v1.0/users/$id" '{"accountEnabled":true}' > /dev/null); }; then
+        (api DELETE "/graph/v1.0/users/$id" > /dev/null) ||
+            die "Couldn't set up $user, nor remove the account again: ./users.sh delete $user"
+        die "Couldn't set up $user; the account was removed again. Run add again."
+    fi
     echo "OpenCloud: created $user"
-    [ "$role" = user ] || set_role "$user" "$rid"
     if with_authelia; then
         export Y_HASH="$hash" Y_GROUP="$([ "$role" = admin ] && echo admins || true)"
-        users_yaml | yq '.users[strenv(Y_USER)] = {"displayname": strenv(Y_NAME), "email": strenv(Y_EMAIL),
+        update_users '.users[strenv(Y_USER)] = {"displayname": strenv(Y_NAME), "email": strenv(Y_EMAIL),
             "password": strenv(Y_HASH), "disabled": false,
-            "groups": ([strenv(Y_GROUP)] | map(select(. != "")))}' | write_users
+            "groups": ([strenv(Y_GROUP)] | map(select(. != "")))}'
         echo "Authelia: added $user$([ "$role" = admin ] && echo ' (admins: 2FA required)' || true)"
     fi
 }
 
 cmd_passwd() {
-    local user="${1-}" pw hash
+    local user="${1-}" pw hash id body
     [ -n "$user" ] || die "passwd USER"
     valid_name "$user"
+    case "${2-}" in ""|--random) ;; *) die "passwd USER [--random]" ;; esac
     pw="$(read_password "${2-}")"
+    token
     if with_authelia; then
         hash="$(hash_password "$pw")"
         [ -n "$hash" ] || die "Couldn't hash the password"
@@ -224,26 +285,47 @@ cmd_passwd() {
             export Y_USER="$user" Y_NAME="$(yq -p json '.displayName // ""' <<< "$u")" \
                 Y_EMAIL="$(yq -p json '.mail // ""' <<< "$u")" \
                 Y_GROUP="$([ "$(yq -p json '.appRoleAssignments[0].appRoleId // ""' <<< "$u")" = "$ROLE_ADMIN" ] && echo admins || true)"
-            users_yaml | yq '.users[strenv(Y_USER)] = {"displayname": strenv(Y_NAME), "email": strenv(Y_EMAIL),
+            update_users '.users[strenv(Y_USER)] = {"displayname": strenv(Y_NAME), "email": strenv(Y_EMAIL),
                 "password": strenv(Y_HASH), "disabled": false,
-                "groups": ([strenv(Y_GROUP)] | map(select(. != "")))}' | write_users
+                "groups": ([strenv(Y_GROUP)] | map(select(. != "")))}'
             echo "Authelia: added $user with a password$([ -n "$Y_GROUP" ] && echo ' (admins: 2FA required)' || true)"
         fi
     else
         export Y_HASH="$pw"
-        api PATCH "/graph/v1.0/users/$(user_id "$user")" \
-            "$(echo '{}' | json '.passwordProfile.password = strenv(Y_HASH)')" > /dev/null
+        id="$(user_id "$user")"
+        body="$(echo '{}' | json '.passwordProfile.password = strenv(Y_HASH)')"
+        api PATCH "/graph/v1.0/users/$id" "$body" > /dev/null
         echo "OpenCloud: new password for $user"
     fi
 }
 
 cmd_role() {
-    local user="${1-}" role="${2-}" rid
+    local user="${1-}" role="${2-}" rid id drive="" state="" with_space answer
     [ -n "$user" ] && [ -n "$role" ] || die "role USER user|admin|light|client|employee"
     valid_name "$user"
     rid="$(role_id "$role")"
-    set_role "$user" "$rid"
+    token
+    id="$(user_id "$user")"
+    read -r drive state <<< "$(personal_drive "$id")" || true
+    # These types have no personal space. One the user already has is disabled,
+    # not deleted: the files stay and an admin can enable it again (the owner
+    # can't, patches/reva/0002), and shares and links from it stop working.
+    case "$role" in client|employee|light) with_space="" ;; *) with_space=1 ;; esac
+    if [ -z "$with_space" ] && [ -n "$drive" ] && [ "$state" != trashed ] && [ -t 0 ]; then
+        read -rp "$user has a personal space. As $role they don't: it gets disabled (files kept, an admin can enable it again), and their shares and links from it stop working. Continue? [y/N] " answer
+        case "$answer" in y|Y) ;; *) die "Nothing changed" ;; esac
+    fi
+    set_role_id "$id" "$rid"
     echo "OpenCloud: $user is now $role"
+    if [ -z "$with_space" ] && [ -n "$drive" ] && [ "$state" != trashed ]; then
+        (api DELETE "/graph/v1.0/drives/${drive//\$/%24}" > /dev/null) ||
+            die "$user is $role now, but their personal space is still enabled: run the same command again"
+        echo "OpenCloud: disabled $user's personal space (their shares and links from it stop working)"
+    elif [ -n "$with_space" ] && [ "$state" = trashed ]; then
+        (api PATCH "/graph/v1.0/drives/${drive//\$/%24}" '{}' 'Restore: T' > /dev/null) ||
+            die "$user is $role now, but their personal space is still disabled: run the same command again"
+        echo "OpenCloud: enabled $user's personal space again"
+    fi
     if with_authelia && has_user "$user"; then
         if [ "$role" = admin ]; then
             edit_user "$user" '.groups = ((.groups // []) + ["admins"] | unique)'
@@ -255,27 +337,33 @@ cmd_role() {
 }
 
 cmd_email() {
-    local user="${1-}" email="${2-}"
+    local user="${1-}" email="${2-}" id body
     [ -n "$user" ] && [ -n "$email" ] || die "email USER ADDRESS"
     valid_name "$user"
     export Y_EMAIL="$email"
-    api PATCH "/graph/v1.0/users/$(user_id "$user")" "$(echo '{}' | json '.mail = strenv(Y_EMAIL)')" > /dev/null
+    token
+    id="$(user_id "$user")"
+    body="$(echo '{}' | json '.mail = strenv(Y_EMAIL)')"
+    api PATCH "/graph/v1.0/users/$id" "$body" > /dev/null
     if with_authelia && has_user "$user"; then edit_user "$user" '.email = strenv(Y_EMAIL)'; fi
     echo "$user: e-mail is now $email"
 }
 
 cmd_enable() { # USER true|false
-    local user="${1-}" on="$2"
+    local user="${1-}" on="$2" id body
     [ -n "$user" ] || die "USER missing"
     valid_name "$user"
     export Y_FLAG="$on"
-    api PATCH "/graph/v1.0/users/$(user_id "$user")" "$(echo '{}' | json '.accountEnabled = (strenv(Y_FLAG) == "true")')" > /dev/null
+    token
+    id="$(user_id "$user")"
+    body="$(echo '{}' | json '.accountEnabled = (strenv(Y_FLAG) == "true")')"
+    api PATCH "/graph/v1.0/users/$id" "$body" > /dev/null
     if with_authelia && has_user "$user"; then edit_user "$user" '.disabled = (strenv(Y_FLAG) != "true")'; fi
     echo "$user $([ "$on" = true ] && echo enabled || echo disabled)"
 }
 
 cmd_delete() {
-    local user="${1-}" answer
+    local user="${1-}" answer id
     [ -n "$user" ] || die "delete USER"
     valid_name "$user"
     [ "$user" != admin ] || die "Not deleting admin"
@@ -283,10 +371,12 @@ cmd_delete() {
         read -rp "Delete $user and their files? Type the username: " answer
         [ "$answer" = "$user" ] || die "Not deleted"
     fi
-    api DELETE "/graph/v1.0/users/$(user_id "$user")" > /dev/null
+    token
+    id="$(user_id "$user")"
+    api DELETE "/graph/v1.0/users/$id" > /dev/null
     echo "OpenCloud: deleted $user"
     if with_authelia && has_user "$user"; then
-        users_yaml | yq 'del(.users[strenv(Y_USER)])' | write_users
+        update_users 'del(.users[strenv(Y_USER)])'
         (reset_2fa "$user") > /dev/null 2>&1 || true
         echo "Authelia: removed $user"
     fi
@@ -312,6 +402,7 @@ cmd_reset_2fa() {
 }
 
 cmd="${1-help}"; shift || true
+case "$cmd" in help|-h|--help) ;; *) yq_start ;; esac
 case "$cmd" in
     list) cmd_list ;;
     add) cmd_add "$@" ;;

@@ -23,6 +23,11 @@ server {
         # (unchanged) come before it.
         proxy_redirect http://127.0.0.1 http://127.0.0.1;
         proxy_redirect http://localhost http://localhost;
+        # Authelia takes the client's address (logs, sign-in history) from the
+        # first X-Forwarded-For entry, and proxy.conf adds to whatever the
+        # client sent. nginx sends both headers in order, so the real address
+        # comes first.
+        proxy_set_header X-Forwarded-For $remote_addr;
         include /config/nginx/proxy.conf;
         include /config/nginx/resolver.conf;
         set $upstream_app {{OC_STACK}}-authelia;

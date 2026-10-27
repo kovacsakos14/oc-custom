@@ -22,6 +22,14 @@ authentication_backend:
     path: /config/users/users_database.yml
     watch: true
 
+# Checked when users choose a password on Authelia's pages (change, reset).
+# Length only. Short on purpose for now; raise it here and in lib.sh
+# (PASSWORD_MIN_LENGTH) together.
+password_policy:
+  standard:
+    enabled: true
+    min_length: 3
+
 # OpenCloud's clients have their own policy below; nothing else is protected
 access_control:
   default_policy: one_factor

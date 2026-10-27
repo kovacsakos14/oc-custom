@@ -5,6 +5,7 @@
 /data/
 /branding/
 /authelia/users/
+/authelia/.users.lock
 /authelia/data/
 /authelia/secrets/
 /swag/*.subdomain.conf

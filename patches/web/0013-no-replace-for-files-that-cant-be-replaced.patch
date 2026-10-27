@@ -1,0 +1,238 @@
+diff --git a/packages/web-app-files/src/helpers/resource/actions/upload.ts b/packages/web-app-files/src/helpers/resource/actions/upload.ts
+index 3212c29..ff83707 100644
+--- a/packages/web-app-files/src/helpers/resource/actions/upload.ts
++++ b/packages/web-app-files/src/helpers/resource/actions/upload.ts
+@@ -2,6 +2,7 @@ import { markRaw } from 'vue'
+ import { Language } from 'vue3-gettext'
+ import { Resource } from '@opencloud-eu/web-client'
+ import { extractExtensionFromFile } from '@opencloud-eu/web-client'
++import { DavPermission } from '@opencloud-eu/web-client/webdav'
+ import {
+   ConflictDialog,
+   OcUppyFile,
+@@ -16,6 +17,24 @@ import {
+ interface ConflictedResource {
+   name: string
+   type: string
++  /** oc-custom: false when the existing file may not be replaced (see mayReplace) */
++  replaceable?: false
++}
++
++/**
++ * oc-custom: whether an upload may replace this existing file. On oc-custom's "Can't
++ * delete" shares files report rename/move (NV) without write (W), and the server refuses
++ * replacing one that has content; an empty one it accepts. Other permissions: as upstream.
++ */
++function mayReplace(resource: Resource): boolean {
++  const permissions = resource.permissions
++  if (typeof permissions !== 'string') {
++    return true
++  }
++  const cantDelete =
++    permissions.includes(DavPermission.Updateable) &&
++    !permissions.includes(DavPermission.FileUpdateable)
++  return !cantDelete || Number(resource.size) === 0
+ }
+ 
+ export class UploadResourceConflict extends ConflictDialog {
+@@ -32,7 +51,8 @@ export class UploadResourceConflict extends ConflictDialog {
+     resource: Resource,
+     conflictCount: number,
+     suggestMerge = false,
+-    separateSkipHandling = false // separate skip-handling between files and folders
++    separateSkipHandling = false, // separate skip-handling between files and folders
++    replaceable = true // oc-custom: false hides Replace
+   ): Promise<ResolveConflict> {
+     const { dispatchModal } = useModals()
+ 
+@@ -48,9 +68,11 @@ export class UploadResourceConflict extends ConflictDialog {
+             ? this.$gettext('Merge')
+             : this.$gettext('Replace'),
+           resource,
+-          conflictCount,
++          // oc-custom: without Replace, "Apply to all" would only ever mean Keep both or Skip
++          conflictCount: replaceable ? conflictCount : 1,
+           suggestMerge,
+           separateSkipHandling,
++          hideSecondary: !replaceable,
+           callbackFn: (conflict: ResolveConflict) => {
+             resolve(conflict)
+           }
+@@ -80,7 +102,11 @@ export class UploadResourceConflict extends ConflictDialog {
+         (f) => f.name === file.name && !file.meta.relativeFolder
+       )
+       if (exists) {
+-        conflicts.push({ name: file.name, type: 'file' })
++        conflicts.push(
++          mayReplace(exists)
++            ? { name: file.name, type: 'file' }
++            : { name: file.name, type: 'file', replaceable: false }
++        )
+       }
+     }
+     return conflicts
+@@ -103,7 +129,12 @@ export class UploadResourceConflict extends ConflictDialog {
+       const isFolder = conflict.type === 'folder'
+       const conflictArray = isFolder ? resolvedFolderConflicts : resolvedFileConflicts
+ 
+-      if (doForAllConflicts && !isFolder) {
++      // oc-custom: a Replace chosen for all isn't applied to a file that can't be replaced
++      if (
++        doForAllConflicts &&
++        !isFolder &&
++        (conflict.replaceable !== false || allConflictsStrategy !== ResolveStrategy.REPLACE)
++      ) {
+         conflictArray.push({
+           name: conflict.name,
+           strategy: allConflictsStrategy
+@@ -126,7 +157,8 @@ export class UploadResourceConflict extends ConflictDialog {
+         { name: conflict.name, isFolder } as Resource,
+         conflictsLeft,
+         isFolder,
+-        true
++        true,
++        conflict.replaceable !== false
+       )
+       isFolder ? folderCount++ : fileCount++
+       if (resolvedConflict.doForAllConflicts) {
+diff --git a/packages/web-app-files/tests/unit/helpers/resource/actions/upload.custom.spec.ts b/packages/web-app-files/tests/unit/helpers/resource/actions/upload.custom.spec.ts
+new file mode 100644
+index 0000000..b512304
+--- /dev/null
++++ b/packages/web-app-files/tests/unit/helpers/resource/actions/upload.custom.spec.ts
+@@ -0,0 +1,73 @@
++import { mock, mockDeep } from 'vitest-mock-extended'
++import { Language } from 'vue3-gettext'
++import { UploadResourceConflict } from '../../../../../src/helpers/resource'
++import { ResolveStrategy, OcUppyFile, useResourcesStore } from '@opencloud-eu/web-pkg'
++import { Resource } from '@opencloud-eu/web-client'
++import { createTestingPinia } from '@opencloud-eu/web-test-helpers'
++
++// oc-custom: no Replace for a file the server won't let the user replace ("Can't delete":
++// rename/move without write, and content); otherwise as upstream
++
++const instanceWith = (currentFiles: Resource[]) => {
++  createTestingPinia({ initialState: { resources: { resources: currentFiles } } })
++  return new UploadResourceConflict(useResourcesStore(), mock<Language>())
++}
++const upload = (name: string) =>
++  mockDeep<OcUppyFile>({ name, meta: { relativePath: '', relativeFolder: '' } })
++
++describe('upload helper (oc-custom)', () => {
++  describe('getConflicts', () => {
++    it.each([
++      ['SNV', 10, false], // "Can't delete", with content
++      ['NV', '10', false],
++      ['SNV', 0, true], // empty: Windows Explorer and macOS Finder create files empty
++      ['SDNVW', 10, true], // "Can edit"
++      ['S', 10, true], // upstream's "Can upload": as upstream
++      ['RDNVW', 10, true] // own file
++    ])('a %s file of size %s may be replaced: %s', (permissions, size, replaceable) => {
++      const instance = instanceWith([mock<Resource>({ name: 'a.txt', permissions, size })])
++      const expected = replaceable
++        ? { name: 'a.txt', type: 'file' }
++        : { name: 'a.txt', type: 'file', replaceable: false }
++      expect(instance.getConflicts([upload('a.txt')])).toEqual([expected])
++    })
++  })
++
++  describe('displayOverwriteDialog', () => {
++    it('asks without Replace for a file that may not be replaced', async () => {
++      const instance = instanceWith([])
++      instance.resolveFileExists = vi.fn(() =>
++        Promise.resolve({ strategy: ResolveStrategy.KEEP_BOTH, doForAllConflicts: false })
++      )
++      await instance.displayOverwriteDialog(
++        [upload('a.txt')],
++        [{ name: 'a.txt', type: 'file', replaceable: false }]
++      )
++      expect(instance.resolveFileExists).toHaveBeenCalledWith(
++        expect.anything(),
++        1,
++        false,
++        true,
++        false
++      )
++    })
++    it("doesn't apply a Replace for all to a file that may not be replaced", async () => {
++      const instance = instanceWith([])
++      instance.resolveFileExists = vi
++        .fn()
++        .mockResolvedValueOnce({ strategy: ResolveStrategy.REPLACE, doForAllConflicts: true })
++        .mockResolvedValueOnce({ strategy: ResolveStrategy.SKIP, doForAllConflicts: false })
++      const result = await instance.displayOverwriteDialog(
++        [upload('a.txt'), upload('b.txt'), upload('c.txt')],
++        [
++          { name: 'a.txt', type: 'file' },
++          { name: 'b.txt', type: 'file', replaceable: false },
++          { name: 'c.txt', type: 'file' }
++        ]
++      )
++      // asked for a.txt (Replace for all), again for b.txt (skipped); c.txt took the Replace
++      expect(instance.resolveFileExists).toHaveBeenCalledTimes(2)
++      expect(result.files.map(({ name }) => name)).toEqual(['a.txt', 'c.txt'])
++    })
++  })
++})
+diff --git a/packages/web-pkg/src/components/Modals/ResourceConflictModal.vue b/packages/web-pkg/src/components/Modals/ResourceConflictModal.vue
+index 600a96a..a75d078 100644
+--- a/packages/web-pkg/src/components/Modals/ResourceConflictModal.vue
++++ b/packages/web-pkg/src/components/Modals/ResourceConflictModal.vue
+@@ -14,7 +14,11 @@
+       <oc-button class="oc-modal-body-actions-cancel ml-2" @click="onCancel">
+         {{ $gettext('Skip') }}
+       </oc-button>
+-      <oc-button class="oc-modal-body-actions-secondary ml-2" @click="onConfirmSecondary">
++      <oc-button
++        v-if="!hideSecondary"
++        class="oc-modal-body-actions-secondary ml-2"
++        @click="onConfirmSecondary"
++      >
+         {{ confirmSecondaryText }}
+       </oc-button>
+       <oc-button class="oc-modal-body-actions-confirm ml-2" appearance="filled" @click="onConfirm">
+@@ -43,7 +47,9 @@ export default defineComponent({
+     },
+     suggestMerge: { type: Boolean, default: true },
+     separateSkipHandling: { type: Boolean, default: false },
+-    confirmSecondaryTextOverwrite: { type: String, default: null }
++    confirmSecondaryTextOverwrite: { type: String, default: null },
++    // oc-custom: no Replace/Merge button, e.g. for a file the user may not replace
++    hideSecondary: { type: Boolean, default: false }
+   },
+   setup(props) {
+     const { removeModal } = useModals()
+diff --git a/packages/web-pkg/tests/unit/components/Modals/ResourceConflictModal.custom.spec.ts b/packages/web-pkg/tests/unit/components/Modals/ResourceConflictModal.custom.spec.ts
+new file mode 100644
+index 0000000..b907ca9
+--- /dev/null
++++ b/packages/web-pkg/tests/unit/components/Modals/ResourceConflictModal.custom.spec.ts
+@@ -0,0 +1,28 @@
++import ResourceConflictModal from '../../../../src/components/Modals/ResourceConflictModal.vue'
++import { defaultComponentMocks, defaultPlugins, shallowMount } from '@opencloud-eu/web-test-helpers'
++import { mock } from 'vitest-mock-extended'
++import { Resource } from '@opencloud-eu/web-client'
++import { Modal } from '../../../../src/composables/piniaStores'
++
++// oc-custom: the modal can leave out its Replace/Merge button
++
++describe('ResourceConflictModal (oc-custom)', () => {
++  it.each([
++    [false, true],
++    [true, false]
++  ])('with hideSecondary %s shows Replace: %s', (hideSecondary, shown) => {
++    const wrapper = shallowMount(ResourceConflictModal, {
++      props: {
++        modal: mock<Modal>(),
++        resource: mock<Resource>(),
++        conflictCount: 1,
++        callbackFn: () => ({}),
++        hideSecondary
++      },
++      global: { plugins: [...defaultPlugins()], mocks: defaultComponentMocks() }
++    })
++    expect(wrapper.find('.oc-modal-body-actions-secondary').exists()).toBe(shown)
++    expect(wrapper.find('.oc-modal-body-actions-confirm').exists()).toBe(true)
++    expect(wrapper.find('.oc-modal-body-actions-cancel').exists()).toBe(true)
++  })
++})

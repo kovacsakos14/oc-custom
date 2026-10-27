@@ -30,7 +30,7 @@ Built into the image (from 7.2.4-6): no settings file and no environment variabl
 | Web | every change in the [table](#whats-changed) marked Client | the same, but text files can be created |
 
 - **Assigning:** Admin settings → Users → Role (OpenCloud calls the types "roles"), `deploy/users.sh add|role … client|employee`, or Graph (`POST /graph/v1.0/users/{id}/appRoleAssignments` with the ids below). Admins stay upstream's Admin and see upstream's web UI, apart from the changes marked "everyone".
-- **"Can't delete"** is offered in the share dialog for folders, between "Can upload" and "Can edit": view, download, upload, new folders, rename and move; no editing and no deleting. Its files open read-only in the apps (the Text Editor has no Save), and the desktop app marks them read-only and turns a local edit into a conflict copy. An overwrite by upload is still accepted by the server (it keeps the old content as a version).
+- **"Can't delete"** is offered in the share dialog for folders, between "Can upload" and "Can edit": view, download, upload, new folders, rename and move; no editing and no deleting. Its files open read-only in the apps (the Text Editor has no Save), and the desktop app marks them read-only and turns a local edit into a conflict copy. The server refuses an upload over an existing file that has content (from any client: web, desktop and phone apps, WebDAV), so nothing on such a share can be lost; an empty file may be replaced, because Windows Explorer and macOS Finder create files empty and then upload the content. A file can still be renamed and a new one uploaded under its old name: the original stays.
 - **Upstream's "Can upload"** is upstream's again: the server allows rename and move, but the apps don't offer it.
 - **Resharing** isn't possible in OpenCloud 7.2 (the server refuses folder shares that carry the right to share), so Employees, like Clients, share nothing. Admins share client folders from their personal space.
 - **The server doesn't enforce Preferences' permissions** (upstream: settings values are saved without a permission check), so they hide settings in the web; someone calling the API by hand could still change their own auto-accept or e-mail settings.
@@ -48,11 +48,11 @@ Built into the image (from 7.2.4-6): no settings file and no environment variabl
 | 1 | **"Can't delete" shares report rename and move** (`NV` in `oc:permissions`) to the apps. Until 7.2.4-5 this was "Can upload"; from 7.2.4-6 "Can upload" reports upstream's letters again. No `D`, no `W`. | the share role | `patches/reva/0001-…` |
 | 2 | **The web UI's Move action needs only rename permission,** no longer delete permission too. Drag and drop and cut/paste had no such check. Moving to another space is a copy, as before. | everyone (follows the share) | `patches/web/0001-…` |
 | 3 | **The table is the default file view** instead of tiles. Users who already picked a view keep it (it's stored in their browser). | everyone | `patches/web/0002-…` |
-| 4 | **A link to a drive that doesn't resolve leads to "Shared with me"** instead of the Spaces list (old `/files/spaces/personal` links, accounts without a personal space). | Client, Employee | `patches/web/0003-…` |
+| 4 | **A link to a drive that doesn't resolve leads to "Shared with me"** instead of the Spaces list (old `/files/spaces/personal` links, accounts without a personal space; from 7.2.4-7 also when a demoted user's disabled personal space is still listed). | Client, Employee | `patches/web/0003-…` |
 | 5 | **The sign-in page follows the branding:** its tab title, tab icon, colours, footer and, from 7.2.4-2, a background image (see [Branding](#branding)). Without branding it looks exactly as upstream's. | everyone | `patches/server/0001-…` |
 | 6 | **"Change password" can open an external password page** (from 7.2.4-4; for the optional [Authelia](deploy/README.md) setup). When `WEB_OPTION_ACCOUNT_EDIT_LINK_HREF` is set, Settings → Preferences → "Change password" opens that URL in a new tab instead of OpenCloud's dialog, and the row shows even if OpenCloud's own password change is turned off. The "Edit" button upstream shows for that setting on Settings → Profile is removed, and (from 7.2.4-5) so is the "Show devices" row `WEB_OPTION_LOGOUT_URL` would add there (see 12). Without the settings nothing changes. From 7.2.4-6 the same patch shows on Preferences only the notification settings the user's type may change (no empty tables for Clients). | everyone | `patches/web/0004-…` |
 | 7 | **The share dialog finds people by username** too (from 7.2.4-5), not only by display name and e-mail. The server already matched usernames; the web dropped those results. | everyone | `patches/web/0005-…` |
-| 8 | **No Spaces entry** in the left menu. Shares is their first entry and their start page anyway: they have no Personal or Favorites. (7.2.4-5 did this for everyone.) | Client, Employee | `patches/web/0006-…` |
+| 8 | **No Spaces entry** in the left menu. Shares is their first entry and their start page anyway: they have no Personal or Favorites. (7.2.4-5 did this for everyone.) From 7.2.4-7 no Personal entry either, even for a User changed to Client or Employee, whose disabled personal space the server still lists. | Client, Employee | `patches/web/0006-…` |
 | 9 | **Shares can't be hidden:** no Hide action, no eye button in "Shared with me", no Shares / Hidden Shares switch. Shares hidden before show in the list again. | Client, Employee | `patches/web/0007-…` |
 | 10 | **No "Copy permanent link".** The link only ever worked for people who already had access. | Client, Employee | `patches/web/0008-…` |
 | 11 | **No text or Markdown files in "New".** Such files still open in the Text Editor. (Its app menu entry needs a personal space upstream.) | Client | `patches/web/0009-…` |
@@ -61,6 +61,10 @@ Built into the image (from 7.2.4-6): no settings file and no environment variabl
 | 14 | **The share role "Can't delete"**, with its icon. | – | `patches/server/0003-…` |
 | 15 | **The type table:** one place in the web code that says which change applies to which user type (`ocCustomFeatures` in web-pkg). | – | `patches/web/0011-…` |
 | 16 | **Apps open a file for editing only with write permission** (`W`); upstream also accepted rename/move (`NV`) alone. | everyone (follows the share) | `patches/web/0012-…` |
+| 17 | **Only an admin can enable a disabled personal space,** its owner too can't (upstream let a space's manager enable it, and the owner manages their personal space). Disabling one already needed an admin. `deploy/users.sh` disables a user's personal space when they become a Client, Employee or User Light. | everyone | `patches/reva/0002-…` |
+| 18 | **"Can't delete" can't replace a file:** the server refuses an upload over an existing file that has content (PUT, TUS, COPY onto it; renaming or moving onto a name already needed delete permission). An empty file may still be replaced (Windows Explorer and macOS Finder create files empty first). | the share role | `patches/reva/0003-…` |
+| 19 | **No "Replace" in the upload dialog for a file that can't be replaced:** when an upload's name exists and the file reports rename/move without write (`NV` without `W`, as on "Can't delete") and has content, the dialog offers Keep both and Skip only, and a "Replace" chosen for all conflicts isn't applied to it (it gets its own question). Upstream's roles keep their dialog. | everyone (follows the share) | `patches/web/0013-…` |
+| 20 | **No Text Editor in the app menu,** even for a User changed to Client or Employee: upstream shows it whenever there's a personal space, and their disabled one still counts (the entry would create a file in it). | Client, Employee | `patches/web/0014-…` |
 
 **Defaults in the image** (from 7.2.4-6; a compose file can override them): `FRONTEND_DISABLE_RADICALE=true` (no Calendar in the app menu: without a CalDAV server it leads nowhere) and `FRONTEND_CONFIGURABLE_NOTIFICATIONS=true` (the per-event notification table in Preferences).
 
@@ -133,7 +137,7 @@ OpenCloud merges `themes/_branding/theme.json` over its own theme on every reque
 
 ## Building
 The build needs more memory than a small VM has (the Go link step alone takes several GB), so it runs in **GitHub Actions** (`.github/workflows/build.yml`):
-- **A tag `v7.2.4-<build>`** builds, smoke-tests and publishes `:7.2.4-<build>`. The tag must match `OC_VERSION` and `BUILD` in `versions.env`, and an existing image tag is never overwritten.
+- **A tag `v7.2.4-<build>`** builds, smoke-tests and publishes `:7.2.4-<build>`, then creates a GitHub release for the tag (the image name, then the PRs merged since the last release). The tag must match `OC_VERSION` and `BUILD` in `versions.env`, and an existing image tag is never overwritten. A failed build creates no release.
 - **A manual run** (Actions → Build → Run workflow) publishes `:test-<commit>` for trying a build before tagging it.
 
 `scripts/build-native` is what CI runs, and it works on any machine with Docker and about 8 GB of RAM:
@@ -202,6 +206,7 @@ Builds are tested in a separate OpenCloud test environment (Docker Compose, not 
 - `patches/server`, `patches/reva`, `patches/web`: the changes, as plain diffs. No two patches touch the same file.
 - `scripts/fetch`: clone upstream at those versions into `upstream/` (gitignored).
 - `scripts/apply`: apply the patches.
+- `scripts/check-upstream`: check that `upstream/` holds exactly the patches, nothing older or extra (`build-native` runs it; `OC_CUSTOM_ALLOW_DIRTY=1` makes extra changes a warning).
 - `scripts/refresh-patches`: rewrite the patches from `upstream/`.
 - `scripts/compat`: check that the patches apply to other versions.
 - `scripts/build-native`, `Dockerfile`: the build.

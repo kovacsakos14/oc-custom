@@ -9,12 +9,19 @@ services:
     container_name: ${OC_STACK}-opencloud
     user: "${PUID}:${PGID}"
     # Creates the config on the first start, then runs the server; with
-    # SMTP_HOST set also OpenCloud's own e-mails (notifications)
+    # SMTP_HOST set also OpenCloud's own e-mails (notifications). The admin
+    # password for the first start comes from config/.admin-password
+    # (setup.sh), goes to init alone (not this container's environment, not
+    # a command line) and is deleted afterwards.
     entrypoint:
       - sh
       - -c
       - |
-        [ -f /etc/opencloud/opencloud.yaml ] || opencloud init --insecure false --admin-password "$$OC_ADMIN_PASSWORD" >/dev/null
+        if [ ! -f /etc/opencloud/opencloud.yaml ]; then
+          [ -s /etc/opencloud/.admin-password ] || { echo "No configuration and no admin password yet: run ./setup.sh first" >&2; exit 1; }
+          IDM_ADMIN_PASSWORD="$$(cat /etc/opencloud/.admin-password)" opencloud init --insecure false >/dev/null || exit 1
+        fi
+        rm -f /etc/opencloud/.admin-password
         [ -z "$$NOTIFICATIONS_SMTP_HOST" ] || export OC_ADD_RUN_SERVICES="$$OC_ADD_RUN_SERVICES,notifications"
         exec opencloud server
     # OpenCloud calls its own public address; this sends it to SWAG on this
@@ -23,15 +30,15 @@ services:
       - "${OC_DOMAIN}:host-gateway"
     environment:
       OC_URL: https://${OC_DOMAIN}
-      # Used on the first start only; changing it later has no effect
-      OC_ADMIN_PASSWORD: ${OC_ADMIN_PASSWORD}
       # SWAG terminates TLS
       PROXY_TLS: "false"
       PROXY_HTTP_ADDR: 0.0.0.0:9200
-      # App tokens (users.sh, management tools) and impersonation
+      # App tokens (users.sh, management tools)
       OC_ADD_RUN_SERVICES: auth-app
       PROXY_ENABLE_APP_AUTH: "true"
-      AUTH_APP_ENABLE_IMPERSONATION: "true"
+      # Off unless .env turns it on: with it, an admin's app token can make
+      # tokens for any user and so read every user's files
+      AUTH_APP_ENABLE_IMPERSONATION: ${AUTH_APP_ENABLE_IMPERSONATION:-false}
       # OpenCloud's own e-mails (shares)
       NOTIFICATIONS_SMTP_HOST: ${SMTP_HOST}
       NOTIFICATIONS_SMTP_PORT: ${SMTP_PORT}

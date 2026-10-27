@@ -40,8 +40,10 @@ services:
           case "$$SMTP_ENCRYPTION" in
             ssltls) scheme=submissions ;;
             starttls) scheme=submission ;;
-            *) scheme=smtp
+            none) scheme=smtp
                export AUTHELIA_NOTIFIER_SMTP_DISABLE_REQUIRE_TLS=true AUTHELIA_NOTIFIER_SMTP_DISABLE_STARTTLS=true ;;
+            # Anything else would have meant plain text without a word
+            *) echo "SMTP_ENCRYPTION must be starttls, ssltls or none (is: '$$SMTP_ENCRYPTION')" >&2; exit 1 ;;
           esac
           export AUTHELIA_NOTIFIER_SMTP_ADDRESS="$$scheme://$$SMTP_HOST:$$SMTP_PORT"
           export AUTHELIA_NOTIFIER_SMTP_SENDER="$$SMTP_SENDER"

@@ -1,0 +1,60 @@
+#!/usr/bin/env bash
+# Checks that the clones in upstream/ hold exactly our patches (after
+# scripts/apply), so a build can't pick up stray edits or an older version of
+# a patch: every patch must be applied as it is now, and every changed
+# tracked file must belong to one. Untracked files only get a warning (some
+# build output isn't in upstream's .gitignore). scripts/build-native runs it.
+#   OC_CUSTOM_ALLOW_DIRTY=1   stray changes are a warning, not an error
+set -euo pipefail
+
+repo="$(cd "$(dirname "$0")/.." && pwd)"
+vendored=vendor/github.com/opencloud-eu/reva/v2
+status=0
+
+patch_files() { # patch files...: the paths they touch
+    sed -n 's|^diff --git a/\(.*\) b/.*|\1|p' "$@"
+}
+
+for part in server reva web; do
+    dir="$repo/upstream/$part"
+    patches=("$repo"/patches/"$part"/*.patch)
+    [ -e "${patches[0]}" ] || patches=()
+
+    for p in "${patches[@]}"; do
+        git -C "$dir" apply --reverse --check "$p" 2>/dev/null || {
+            echo "$part/$(basename "$p"): not applied as it is now (an older version in upstream/$part?)" >&2
+            status=1
+        }
+    done
+
+    allowed="$( { [ ${#patches[@]} -eq 0 ] || patch_files "${patches[@]}"
+        case "$part" in
+            # build-native patches the server's vendored reva itself (without tests)
+            server) patch_files "$repo"/patches/reva/*.patch | grep -v '_test\.go$' | sed "s|^|$vendored/|" ;;
+            # build-native adds the pnpm hash for the build and restores it
+            web) echo package.json ;;
+        esac; } | sort -u)"
+
+    stray="$(git -C "$dir" diff --name-only HEAD | sort -u | comm -23 - <(echo "$allowed"))"
+    if [ -n "$stray" ]; then
+        echo "upstream/$part: changes that aren't in any patch:" >&2
+        sed 's/^/  /' <<< "$stray" >&2
+        if [ "${OC_CUSTOM_ALLOW_DIRTY:-}" = 1 ]; then
+            echo "  (OC_CUSTOM_ALLOW_DIRTY=1: building with them anyway)" >&2
+        else
+            status=1
+        fi
+    fi
+
+    untracked="$(git -C "$dir" ls-files --others --exclude-standard | grep -vxF -f <(echo "$allowed") || true)"
+    if [ -n "$untracked" ]; then
+        echo "upstream/$part: warning, untracked files (build output, or something to check):" >&2
+        head -20 <<< "$untracked" | sed 's/^/  /' >&2
+        [ "$(wc -l <<< "$untracked")" -le 20 ] || echo "  …" >&2
+    fi
+done
+
+if [ "$status" != 0 ]; then
+    echo "Reset the clones with scripts/fetch --force (then scripts/apply), or turn the change into a patch." >&2
+fi
+exit "$status"
