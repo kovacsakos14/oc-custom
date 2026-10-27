@@ -16,10 +16,10 @@ index 0000000..57e8fe6
 +export * from './useOcCustomFeatures'
 diff --git a/packages/web-pkg/src/composables/ocCustom/useOcCustomFeatures.ts b/packages/web-pkg/src/composables/ocCustom/useOcCustomFeatures.ts
 new file mode 100644
-index 0000000..5d0ba43
+index 0000000..4f2ddf1
 --- /dev/null
 +++ b/packages/web-pkg/src/composables/ocCustom/useOcCustomFeatures.ts
-@@ -0,0 +1,51 @@
+@@ -0,0 +1,54 @@
 +import { unref } from 'vue'
 +import { User } from '@opencloud-eu/web-client/graph/generated'
 +import { useUserStore } from '../piniaStores'
@@ -39,6 +39,9 @@ index 0000000..5d0ba43
 +export const ocCustomFeatures = {
 +  /** a drive that doesn't resolve (no personal space) leads to "Shared with me", not Spaces */
 +  sharesLanding: [client, employee],
++  /** no Personal entry, and a personal space is ignored (a User changed to one of these types
++   * keeps theirs, disabled, and the server still lists it) */
++  noPersonal: [client, employee],
 +  /** no Spaces entry in the files menu */
 +  hideSpaces: [client, employee],
 +  /** shares can't be hidden, and "Shared with me" lists them all */
