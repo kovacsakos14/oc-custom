@@ -2,7 +2,9 @@
 # small API in the oc-custom image that a management tool calls through SWAG
 # (https://<OC_DOMAIN>/manage-api/) instead of SSH and OpenCloud's
 # impersonation. Its token: setup.sh. With Authelia, add
-# compose.manage-authelia.yaml too.
+# compose.manage-authelia.yaml too. From 7.2.4-11 it may also write the
+# branding folder (an API image with branding, MANAGE_API_IMAGE) and keeps
+# its records in ./manage-api/state.
 
 services:
   manage-api:
@@ -22,9 +24,17 @@ services:
     tmpfs: [/tmp]
     cap_drop: [ALL]
     security_opt: ["no-new-privileges:true"]
+    environment:
+      MANAGE_API_BRANDING_DIR: /branding
     volumes:
       # OpenCloud's config, for its CLI
       - ./config:/etc/opencloud:ro
       # token.sha256 (setup.sh)
       - ./manage-api:/etc/manage-api:ro
+      # Its records (users whose e-mails it muted for a moment, earlier
+      # branding versions); keep them in backups
+      - ./manage-api/state:/var/lib/manage-api
+      # The branding folder, writable here (OpenCloud's mount stays
+      # read-only); the API checks every file it writes
+      - ./branding:/branding
     restart: unless-stopped

@@ -59,6 +59,7 @@ services:
       # Owner of the files it writes: the same user as OpenCloud and users.sh
       PUID: ${PUID}
       PGID: ${PGID}
+      AUTHELIA_SERVER_ASSET_PATH: /config/assets/
       X_AUTHELIA_CONFIG_FILTERS: template
       OC_DOMAIN: ${OC_DOMAIN}
       SMTP_HOST: ${SMTP_HOST}
@@ -79,5 +80,8 @@ services:
       # Its database (2FA devices, keep it in backups) and notification.txt
       - ./authelia/data:/data
       - ./authelia/secrets:/secrets:ro
+      # Its sign-in page's logo.png and favicon.ico (7.2.4-11); empty:
+      # Authelia's own. Read on every request, so a change shows at once.
+      - ./authelia/assets:/config/assets:ro
     networks: [default, swag]
     restart: unless-stopped

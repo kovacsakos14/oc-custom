@@ -3,12 +3,15 @@
 # compose.authelia.yaml), so Authelia's CLI in the API's container (2FA
 # devices) reads the same config, secrets and database; the user file is
 # changed under users.sh's lock (authelia/.users.lock, made by setup.sh).
+# From 7.2.4-11 the API may also write Authelia's logo and tab icon
+# (authelia/assets).
 
 services:
   manage-api:
     environment:
       MANAGE_API_AUTHELIA_USERS: /config/users/users_database.yml
       MANAGE_API_AUTHELIA_LOCK: /authelia-lock/.users.lock
+      MANAGE_API_AUTHELIA_ASSETS: /authelia-assets
       X_AUTHELIA_CONFIG_FILTERS: template
       OC_DOMAIN: ${OC_DOMAIN}
       AUTHELIA_IDENTITY_VALIDATION_RESET_PASSWORD_JWT_SECRET_FILE: /secrets/jwt
@@ -21,3 +24,4 @@ services:
       - ./authelia/data:/data
       - ./authelia/secrets:/secrets:ro
       - ./authelia/.users.lock:/authelia-lock/.users.lock
+      - ./authelia/assets:/authelia-assets

@@ -91,6 +91,8 @@ All under `https://<your domain>/manage-api/`, with the header `Authorization: B
 The API runs from the oc-custom image (`OC_IMAGE`). `MANAGE_API_IMAGE` in `.env` (from 7.2.4-10) runs it from another image of it instead, one with its own release cycle; `setup.sh` then makes the token with that image. The server must be able to pull it (`docker login` first for a private registry).
 5. `docker compose up -d`.
 
+**Branding through the API (from 7.2.4-11):** `compose.manage.yaml` mounts the branding folder (`branding/`) writable into the API's container (OpenCloud's mount stays read-only), and `compose.manage-authelia.yaml` Authelia's asset folder (`authelia/assets/`: `logo.png` and `favicon.ico` for Authelia's sign-in page; empty, Authelia shows its own). An API image that offers branding (`MANAGE_API_IMAGE`; the one in the oc-custom image doesn't) writes them, checking every file, and keeps the versions it replaces in `manage-api/state/`. Without such an image, nothing writes there and both folders stay as you edit them by hand.
+
 **What protects it:**
 - **It never acts on admins:** any change to a member of Authelia's `admins` group or to an OpenCloud Admin is refused (403), and nobody can be added to `admins` or taken out of it. So it can't turn an admin's 2FA off either: admins get 2FA from `admins`, and `two_factor` only changes the separate `2fa` group. Admins stay with `users.sh` on the server. So a leaked token reaches only the other accounts, which the management tool's admin app token can reach anyway.
 - **The token:** 256 random bits, compared in constant time; after 10 wrong tokens from one address within 10 minutes, that address is refused for the rest of the 10 minutes.
@@ -113,7 +115,8 @@ Back up the whole folder. With the stack stopped (`docker compose stop`) the cop
 - `config/`, `data/`: OpenCloud's configuration and all files;
 - `authelia/`: the user file (passwords), the database (`authelia/data/db.sqlite3`: the users' 2FA devices) and the secrets (`authelia/secrets/`: without them the database can't be read);
 - `.env`;
-- with the management API: `manage-api/` (its token's hash; or make a new token after a restore).
+- `branding/` and, with Authelia, `authelia/assets/` (already in `authelia/`);
+- with the management API: `manage-api/` (its token's hash, or make a new token after a restore; from 7.2.4-11 also `manage-api/state/`: earlier branding versions).
 
 ## Updating
 Each oc-custom release names the OpenCloud image and the Authelia version it was tested with (`versions.env` in the repo). Change `OC_IMAGE` and `AUTHELIA_IMAGE` in `.env` to those, then:
