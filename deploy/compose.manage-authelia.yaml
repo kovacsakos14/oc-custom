@@ -1,0 +1,23 @@
+# With compose.authelia.yaml and compose.manage.yaml: gives the management API
+# Authelia's users. The mounts and settings are Authelia's own (see
+# compose.authelia.yaml), so Authelia's CLI in the API's container (2FA
+# devices) reads the same config, secrets and database; the user file is
+# changed under users.sh's lock (authelia/.users.lock, made by setup.sh).
+
+services:
+  manage-api:
+    environment:
+      MANAGE_API_AUTHELIA_USERS: /config/users/users_database.yml
+      MANAGE_API_AUTHELIA_LOCK: /authelia-lock/.users.lock
+      X_AUTHELIA_CONFIG_FILTERS: template
+      OC_DOMAIN: ${OC_DOMAIN}
+      AUTHELIA_IDENTITY_VALIDATION_RESET_PASSWORD_JWT_SECRET_FILE: /secrets/jwt
+      AUTHELIA_SESSION_SECRET_FILE: /secrets/session
+      AUTHELIA_STORAGE_ENCRYPTION_KEY_FILE: /secrets/storage
+      AUTHELIA_IDENTITY_PROVIDERS_OIDC_HMAC_SECRET_FILE: /secrets/hmac
+    volumes:
+      - ./authelia/configuration.yml:/config/configuration.yml:ro
+      - ./authelia/users:/config/users
+      - ./authelia/data:/data
+      - ./authelia/secrets:/secrets:ro
+      - ./authelia/.users.lock:/authelia-lock/.users.lock

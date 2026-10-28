@@ -36,6 +36,7 @@ conf() {
 }
 
 with_authelia() { case "$(conf COMPOSE_FILE)" in *compose.authelia.yaml*) return 0 ;; esac; return 1; }
+with_manage() { case "$(conf COMPOSE_FILE)" in *compose.manage.yaml*) return 0 ;; esac; return 1; }
 
 # yq on stdin; values go in as environment variables (strenv(NAME) in the
 # expression), never into the expression itself. After yq_start it runs in
@@ -99,7 +100,7 @@ lock_users() {
     USERS_LOCKED=1
 }
 
-users_sum() { cksum < "$USERS_FILE" 2> /dev/null || echo none; }
+users_sum() { { cksum < "$USERS_FILE"; } 2> /dev/null || echo none; }
 
 # update_users EXPRESSION: applies a yq expression to Authelia's user file
 # (users: {} when there's none yet). The result is checked and written whole,

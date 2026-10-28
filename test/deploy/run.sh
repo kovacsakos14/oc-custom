@@ -81,8 +81,8 @@ stack() {
     local dir="$WORK/$1" name="$2" domain="$3" authelia="$4"
     cp -r "$repo/deploy" "$dir"
     cp "$here/compose.test.yaml" "$here/compose.test-authelia.yaml" "$dir/"
-    local files="compose.yaml:compose.authelia.yaml:compose.test.yaml:compose.test-authelia.yaml"
-    [ "$authelia" = yes ] || files="compose.yaml:compose.test.yaml"
+    local files="compose.yaml:compose.authelia.yaml:compose.manage.yaml:compose.manage-authelia.yaml:compose.test.yaml:compose.test-authelia.yaml"
+    [ "$authelia" = yes ] || files="compose.yaml:compose.manage.yaml:compose.test.yaml"
     sed -e "s/^OC_STACK=.*/OC_STACK=$name/" -e "s/^OC_DOMAIN=.*/OC_DOMAIN=$domain/" \
         -e "s/^OC_ADMIN_PASSWORD=.*/OC_ADMIN_PASSWORD=$ADMIN_PASSWORD/" \
         -e "s/^ADMIN_EMAIL=.*/ADMIN_EMAIL=admin@deploy.test/" -e "s|^OC_IMAGE=.*|OC_IMAGE=$IMAGE|" \
@@ -90,7 +90,9 @@ stack() {
         -e "s/^SMTP_HOST=.*/SMTP_HOST=dtest-mailpit/" -e "s/^SMTP_PORT=.*/SMTP_PORT=1025/" \
         -e "s/^SMTP_ENCRYPTION=.*/SMTP_ENCRYPTION=none/" -e "s/^SMTP_AUTHENTICATION=.*/SMTP_AUTHENTICATION=none/" \
         "$dir/.env.example" > "$dir/.env"
-    (cd "$dir" && ./setup.sh > /dev/null)
+    # The management API's token is shown once, indented on its own line
+    (cd "$dir" && ./setup.sh) | awk '/shown only now/ { f = 1 } f && /^    [A-Za-z0-9_-]{43}$/ { print $1; exit }' > "$dir/.manage-token"
+    [ -s "$dir/.manage-token" ] || { echo "setup.sh showed no management API token" >&2; exit 1; }
     cp "$dir/swag/$name.subdomain.conf" "$WORK/swag/nginx/proxy-confs/"
 }
 
@@ -118,6 +120,19 @@ personal_state() { # drive id: its state as the admin sees it (trashed when disa
 link_opens() { # public link token: its folder opens with the link's password (207)
     [ "$(curl_ -u "public:Link-Pass-1234!" -X PROPFIND -H "Depth: 0" -o /dev/null -w "%{http_code}" \
         "https://$DOMAIN/dav/public-files/$1")" = 207 ]
+}
+
+# The management API of the stack in the current folder, through SWAG
+mapi() { # METHOD PATH [JSON]: the answer, then its HTTP status on a line of its own
+    local args=(-X "$1" -H "Authorization: Bearer $(cat .manage-token)" -w '\n%{http_code}')
+    [ -z "${3-}" ] || args+=(-H "Content-Type: application/json" -d "$3")
+    curl_ "${args[@]}" "https://$(sed -n 's/^OC_DOMAIN=//p' .env)/manage-api$2"
+}
+mcode() { mapi "$@" | tail -n 1; } # the status only
+mbody() { mapi "$@" | sed '$d'; }  # the answer only
+firstfactor() { # user, password: Authelia accepts them
+    curl_ -H "Content-Type: application/json" -d "{\"username\":\"$1\",\"password\":\"$2\"}" \
+        "https://$DOMAIN/authelia/api/firstfactor" | grep -q '"status":"OK"'
 }
 
 logon() { # domain, user, password: the built-in sign-in's answer (200 ok, 204 refused)
@@ -196,7 +211,7 @@ step "the desktop app's sign-in (PKCE, loopback redirect, refresh)" desktop.js U
 step "admin: 2FA registered at the first sign-in, removed and registered again on the settings page" admin-2fa.js \
     ADMIN_PASSWORD="$ADMIN_PASSWORD" ADMIN_EMAIL=admin@deploy.test
 check "users.sh reset-2fa admin" './users.sh reset-2fa admin'
-step "admin is asked to register 2FA again" admin-reset.js ADMIN_PASSWORD="$ADMIN_PASSWORD"
+step "admin is asked to register 2FA again" twofa.js USER_NAME=admin USER_PASSWORD="$ADMIN_PASSWORD" WANT=register
 # Changing a User to a type without a personal space disables it, with the links from it
 check "alice (User) shares a folder in her personal space by a public link" \
     'A="alice:$(user_token alice)"
@@ -235,6 +250,86 @@ check "users.sh revokes its app token when it's done" \
     'T="$(admin_token)"; n="$(curl_ -u "admin:$T" "https://$DOMAIN/auth-app/tokens" | yq_ length)" &&
      ./users.sh list > /dev/null && [ "$(curl_ -u "admin:$T" "https://$DOMAIN/auth-app/tokens" | yq_ length)" = "$n" ]'
 check "the user file is private (600)" '[ "$(stat -c %a authelia/users/users_database.yml)" = 600 ]'
+
+echo "  --    the management API (with Authelia), at ${SECONDS}s"
+check "setup.sh stored only the token's SHA-256 (600)" \
+    '[ "$(stat -c %a manage-api/token.sha256)" = 600 ] && ! grep -qF "$(cat .manage-token)" manage-api/token.sha256'
+check "the API refuses a missing or wrong token (401)" \
+    '[ "$(curl_ -o /dev/null -w "%{http_code}" "https://$DOMAIN/manage-api/v1/info")" = 401 ] &&
+     [ "$(curl_ -o /dev/null -w "%{http_code}" -H "Authorization: Bearer wrong" "https://$DOMAIN/manage-api/v1/info")" = 401 ]'
+check "info through SWAG: OpenCloud's version and Authelia" \
+    'mbody GET /v1/info | grep -q "\"opencloud\":\"$(curl_ "https://$DOMAIN/status.php" | sed -n "s/.*\"productversion\": *\"\([^\"]*\)\".*/\1/p")\",\"authelia\":true"'
+# A Client made in OpenCloud only (as a management tool does), then its Authelia entry through the API
+check "a Client created in OpenCloud gets its Authelia entry through the API and signs in" \
+    '[ "$(curl_ -u "admin:$(admin_token)" -H "Content-Type: application/json" -o /dev/null -w "%{http_code}" \
+        -d "{\"onPremisesSamAccountName\":\"ivy\",\"displayName\":\"Ivy\",\"mail\":\"ivy@deploy.test\",\"passwordProfile\":{\"password\":\"x-unused-1\"}}" \
+        "https://$DOMAIN/graph/v1.0/users")" = 201 ] && ./users.sh role ivy client < /dev/null > /dev/null &&
+     mbody PUT /v1/authelia/users/ivy "{\"displayname\":\"Ivy\",\"email\":\"ivy@deploy.test\",\"password\":\"Ivy-pass1\"}" | grep -q "\"created\":true" &&
+     for i in 1 2 3 4 5; do firstfactor ivy Ivy-pass1 && break; sleep 1; done && [ "$i" -lt 5 ]'
+check "the API's list: ivy without a hash, admin marked" \
+    'l="$(mbody GET /v1/authelia/users)"; grep -q "\"name\":\"ivy\"" <<< "$l" && grep -q "\"name\":\"admin\",[^}]*\"admin\":true" <<< "$l" && ! grep -q argon2 <<< "$l"'
+check "disabled through the API, Authelia refuses ivy; enabled, she's back" \
+    '[ "$(mcode PUT /v1/authelia/users/ivy "{\"disabled\":true}")" = 200 ] && sleep 2 && ! firstfactor ivy Ivy-pass1 &&
+     [ "$(mcode PUT /v1/authelia/users/ivy "{\"disabled\":false}")" = 200 ] && sleep 2 && firstfactor ivy Ivy-pass1'
+check "a new password through the API: the new one works, the old one doesn't" \
+    '[ "$(mcode PUT /v1/authelia/users/ivy "{\"password\":\"Ivy-pass2\"}")" = 200 ] && sleep 2 &&
+     firstfactor ivy Ivy-pass2 && ! firstfactor ivy Ivy-pass1'
+check "users.sh 2fa ivy on (the 2fa group)" \
+    './users.sh 2fa ivy on < /dev/null && grep -A8 "^  ivy:" authelia/users/users_database.yml | grep -q -- "- 2fa"'
+step "ivy (a Client in the 2fa group) is asked to register a 2FA app" twofa.js USER_NAME=ivy USER_PASSWORD=Ivy-pass2 WANT=register
+check "2FA off for ivy through the API (two_factor false; the list shows it)" \
+    '[ "$(mcode PUT /v1/authelia/users/ivy "{\"two_factor\":false}")" = 200 ] &&
+     mbody GET /v1/authelia/users | grep -q "\"name\":\"ivy\",[^}]*\"two_factor\":false"'
+step "ivy signs in with the password only again" twofa.js USER_NAME=ivy USER_PASSWORD=Ivy-pass2 WANT=files
+check "2FA on for ivy through the API; info says the configuration has the 2fa rule" \
+    '[ "$(mcode PUT /v1/authelia/users/ivy "{\"two_factor\":true}")" = 200 ] &&
+     mbody GET /v1/authelia/users | grep -q "\"name\":\"ivy\",[^}]*\"two_factor\":true" &&
+     mbody GET /v1/info | grep -q "\"two_factor_group\":true"'
+step "ivy is asked to register a 2FA app again" twofa.js USER_NAME=ivy USER_PASSWORD=Ivy-pass2 WANT=register
+check "users.sh 2fa admin off is refused (admins always need 2FA)" '! ./users.sh 2fa admin off < /dev/null'
+check "Reset 2FA through the API (Authelia's CLI in the API's container)" \
+    'mbody POST /v1/authelia/users/ivy/reset-2fa | grep -q "\"reset\":true"'
+check "ivy's OpenCloud e-mails muted and unmuted through the API, impersonation off" \
+    'mbody PUT /v1/opencloud/users/ivy/emails "{\"disabled\":true}" | grep -q "\"disabled\":true" &&
+     mbody GET /v1/opencloud/users/ivy/emails | grep -q "\"disabled\":true" &&
+     mbody PUT /v1/opencloud/users/ivy/emails "{\"disabled\":false}" | grep -q "\"disabled\":false"'
+check "the API left no app token of ivy's behind" \
+    '[ "$(curl_ -u "ivy:$(user_token ivy)" "https://$DOMAIN/auth-app/tokens" | yq_ length)" = 1 ]'
+check "a User's personal space through the API (alice's); a Client gets none (409)" \
+    'mbody POST /v1/opencloud/users/alice/personal-space | grep -qF "\"id\":\"$space\"" &&
+     [ "$(mcode POST /v1/opencloud/users/ivy/personal-space)" = 409 ]'
+check "the API refuses every change to admin (403); admin's entry is unchanged" \
+    'before="$(grep -A6 "^  admin:" authelia/users/users_database.yml)" &&
+     [ "$(mcode PUT /v1/authelia/users/admin "{\"password\":\"Taken-over1\"}")" = 403 ] &&
+     [ "$(mcode PUT /v1/authelia/users/admin "{\"disabled\":true}")" = 403 ] &&
+     [ "$(mcode PUT /v1/authelia/users/admin "{\"two_factor\":false}")" = 403 ] &&
+     [ "$(mcode POST /v1/authelia/users/admin/reset-2fa)" = 403 ] &&
+     [ "$(mcode DELETE /v1/authelia/users/admin)" = 403 ] &&
+     [ "$(mcode PUT /v1/opencloud/users/admin/emails "{\"disabled\":true}")" = 403 ] &&
+     [ "$before" = "$(grep -A6 "^  admin:" authelia/users/users_database.yml)" ]'
+# OpenCloud's role only (Graph), Authelia's file untouched
+oc_role() { # user, role id
+    local T id app
+    T="admin:$(admin_token)"
+    id="$(curl_ -u "$T" "https://$DOMAIN/graph/v1.0/users/$1" | yq_ .id)"
+    app="$(curl_ -u "$T" "https://$DOMAIN/graph/v1.0/applications" | yq_ ".value[0].id")"
+    [ "$(curl_ -u "$T" -H "Content-Type: application/json" -o /dev/null -w "%{http_code}" \
+        -d "{\"principalId\":\"$id\",\"resourceId\":\"$app\",\"appRoleId\":\"$2\"}" \
+        "https://$DOMAIN/graph/v1.0/users/$id/appRoleAssignments")" = 201 ]
+}
+check "an OpenCloud Admin outside Authelia's admins group is refused too" \
+    'oc_role ivy 71881883-1768-46bd-a24d-a356a2afdf7f && ! grep -A8 "^  ivy:" authelia/users/users_database.yml | grep -q -- "- admins" &&
+     c="$(mcode PUT /v1/authelia/users/ivy "{\"password\":\"Taken-over1\"}")"; oc_role ivy 38f0649f-b600-4188-b138-fbd2c773cc43 && [ "$c" = 403 ]'
+check "users.sh and the API changing the user file at the same time: both land" \
+    'echo Gina-pass1 | ./users.sh add gina > /dev/null & p=$!
+     c="$(mcode PUT /v1/authelia/users/hank "{\"displayname\":\"Hank\",\"password\":\"Hank-pass1\"}")"; wait $p && [ "$c" = 200 ] &&
+     grep -q "^  gina:" authelia/users/users_database.yml && grep -q "^  hank:" authelia/users/users_database.yml &&
+     ./users.sh delete gina < /dev/null > /dev/null && [ "$(mcode DELETE /v1/authelia/users/hank)" = 200 ] &&
+     ! grep -q "^  hank:" authelia/users/users_database.yml'
+check "the API comes back after OpenCloud's container restarts (its network namespace)" \
+    'docker restart dtest-opencloud > /dev/null && wait_up "$DOMAIN" yes &&
+     for i in $(seq 40); do [ "$(mcode GET /v1/info)" = 200 ] && break; sleep 3; done && [ "$i" -lt 40 ]'
+check "users.sh delete ivy" './users.sh delete ivy < /dev/null'
 docker compose down > /dev/null 2>&1
 
 echo "== Without Authelia ($DOMAIN2), at ${SECONDS}s"
@@ -255,6 +350,19 @@ check "the new password works, the old one doesn't (200/204)" \
 check "users.sh reset-2fa is refused without Authelia" '! ./users.sh reset-2fa carol'
 step "carol: OpenCloud's own sign-in page, Change password opens its dialog" builtin.js \
     OC_DOMAIN="$DOMAIN2" USER_NAME=carol USER_PASSWORD=Carol-pass2
+echo "  --    the management API (without Authelia), at ${SECONDS}s"
+check "info: no Authelia; its endpoints answer 404" \
+    'mbody GET /v1/info | grep -q "\"authelia\":false" && [ "$(mcode GET /v1/authelia/users)" = 404 ] &&
+     [ "$(mcode PUT /v1/authelia/users/carol "{\"disabled\":true}")" = 404 ]'
+check "carol's e-mails muted and unmuted, her personal space through the API" \
+    'mbody PUT /v1/opencloud/users/carol/emails "{\"disabled\":true}" | grep -q "\"disabled\":true" &&
+     mbody PUT /v1/opencloud/users/carol/emails "{\"disabled\":false}" | grep -q "\"disabled\":false" &&
+     mbody POST /v1/opencloud/users/carol/personal-space | grep -q "\"id\":\"[^\"]"'
+check "admin is refused here too (403)" '[ "$(mcode PUT /v1/opencloud/users/admin/emails "{\"disabled\":true}")" = 403 ]'
+check "setup.sh --new-manage-token: the new token works at once, the old one is refused" \
+    'old="$(cat .manage-token)" && ./setup.sh --new-manage-token | awk "/shown only now/ { f = 1 } f && /^    [A-Za-z0-9_-]{43}\$/ { print \$1; exit }" > .manage-token &&
+     [ -s .manage-token ] && [ "$(cat .manage-token)" != "$old" ] && [ "$(mcode GET /v1/info)" = 200 ] &&
+     [ "$(curl_ -o /dev/null -w "%{http_code}" -H "Authorization: Bearer $old" "https://$DOMAIN2/manage-api/v1/info")" = 401 ]'
 docker compose down > /dev/null 2>&1
 
 echo

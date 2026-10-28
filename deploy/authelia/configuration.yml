@@ -3,7 +3,8 @@
 # the secrets are files in authelia/secrets (setup.sh), the notifier is set
 # from SMTP_* in compose.authelia.yaml.
 # OpenCloud's four clients keep their default ids, so the apps need no
-# settings. 2FA (TOTP) is required for the admins group only.
+# settings. 2FA (TOTP) is required for the admins group and for users in
+# the 2fa group.
 theme: auto
 
 server:
@@ -59,8 +60,12 @@ identity_providers:
       opencloud:
         default_policy: one_factor
         rules:
+          # Admins always; other users when they're in the 2fa group
+          # (users.sh 2fa, the management API)
           - policy: two_factor
-            subject: group:admins
+            subject:
+              - group:admins
+              - group:2fa
     cors:
       endpoints: [authorization, token, revocation, introspection, userinfo]
       allowed_origins_from_client_redirect_uris: true

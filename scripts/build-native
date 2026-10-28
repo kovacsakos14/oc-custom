@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Builds the patched OpenCloud binary (amd64) with the patched web embedded,
-# then the image. Every step runs in a container with upstream's toolchain, so
+# the management API (manage-api/), then the image. Every step runs in a container with upstream's toolchain, so
 # only Docker is needed. Needs about 8 GB of RAM: run it in CI (GitHub Actions)
 # or on a strong machine, not on a small VM.
 #   scripts/build-native [image tag]     # default: oc-custom:<version>-<build>
@@ -82,7 +82,17 @@ run "$GO_CI_IMAGE" server "make go-generate &&
         VERSION=$OC_VERSION STRING=custom.$BUILD EDITION=stable"
 cp "$up/server/dist/binaries/opencloud-linux-amd64" "$repo/out/opencloud"
 
-# 3. The image: the official one with our binary
+# 3. The management API (manage-api/, tested first) and Authelia's CLI for it
+docker run --rm -u "$(id -u):$(id -g)" -e HOME=/tmp -e GOMODCACHE=/cache/go-mod -e GOCACHE=/cache/go-build \
+    -e GOFLAGS=-buildvcs=false -e CGO_ENABLED=0 -v "$cache:/cache" -v "$repo/manage-api:/src" -v "$repo/out:/out" \
+    -w /src "$GO_CI_IMAGE" sh -euc 'go vet ./... && go test ./... && go build -trimpath -ldflags=-s -o /out/manage-api .'
+curl -fsSL -o "$repo/out/authelia.tar.gz" "$AUTHELIA_MUSL_URL"
+echo "$AUTHELIA_MUSL_SHA256  $repo/out/authelia.tar.gz" | sha256sum -c --quiet
+tar xzf "$repo/out/authelia.tar.gz" -C "$repo/out" authelia
+rm "$repo/out/authelia.tar.gz"
+
+# 4. The image: the official one with our binaries
 docker build --build-arg "BASE_IMAGE=$BASE_IMAGE" -t "$tag" "$repo"
-docker run --rm --entrypoint sh "$tag" -c 'opencloud version | head -2 && ! ldd /usr/bin/opencloud | grep "not found"'
+docker run --rm --entrypoint sh "$tag" -c 'opencloud version | head -2 && ! ldd /usr/bin/opencloud | grep "not found" &&
+    authelia --version && manage-api new-token > /dev/null'
 echo "Built $tag"

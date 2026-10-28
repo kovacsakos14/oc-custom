@@ -5,11 +5,12 @@ This folder is a complete OpenCloud server: oc-custom, optionally [Authelia](htt
 | | With Authelia (default) | Without Authelia |
 |---|---|---|
 | Sign-in page | Authelia's, at `https://<your domain>/authelia` | OpenCloud's own |
-| 2FA | Required for admins (an authenticator app); others sign in with their password | None |
+| 2FA | Required for admins (an authenticator app); others sign in with their password unless they're in the `2fa` group (`users.sh 2fa`) | None |
 | Passwords live in | Authelia's user file (`authelia/users/`) | OpenCloud |
 | "Change password" in OpenCloud | Opens Authelia's page (password, and the user's own 2FA) | OpenCloud's dialog |
 | "Log out" in OpenCloud | Also ends the Authelia session, so the next sign-in asks for the password | OpenCloud's own |
 | Containers | `opencloud`, `authelia` | `opencloud` |
+| With the [management API](#the-management-api-optional-from-724-9) | also `manage-api` | also `manage-api` |
 
 Users are always created in OpenCloud. With Authelia they also need an entry in Authelia's user file; `./users.sh` does both.
 
@@ -46,11 +47,13 @@ The desktop and mobile apps connect to `https://<your domain>` as usual. They op
 ./users.sh disable anna / enable anna
 ./users.sh delete anna                     # deletes her files too; asks to confirm
 ./users.sh reset-2fa anna                  # lost phone: removes her 2FA devices
+./users.sh 2fa anna on                     # she needs 2FA too (off: password only again)
 ```
 - A password can come from stdin instead of the prompt: `echo 'secret' | ./users.sh passwd anna`. `--random` makes one up and shows it once.
 - Passwords need at least 3 characters, in `users.sh`, `setup.sh` and (with Authelia) on Authelia's pages. That's deliberately low for now: raise `PASSWORD_MIN_LENGTH` in `lib.sh` and `password_policy` in `authelia/configuration.yml` together.
 - **Roles:** `client` and `employee` are oc-custom's file-server types (no personal space; clients get folders shared as "Can't delete", staff as "Can edit"; see the [main README](../README.md#user-types-and-the-cant-delete-role)). `user`, `admin` and `light` are upstream's (User, Admin, User Light) with upstream's web UI. `add` without `--role` makes a `user`.
 - **Admins** (`--role admin`) are in Authelia's `admins` group, so they need 2FA. Changing the role with `users.sh role` changes both.
+- **2FA for other users:** `users.sh 2fa <user> on` puts them in Authelia's `2fa` group, which `authelia/configuration.yml` asks for 2FA as it asks admins. At their next sign-in they register an authenticator app; `off` takes them out again (their registered app stays until `reset-2fa`). Admins always need 2FA, so `2fa` refuses them. A server set up before 7.2.4-9 needs the new `authelia/configuration.yml` first (the `group:2fa` rule; `users.sh 2fa` says so).
 - **Changing a `user` or `admin` to `client`, `employee` or `light`** disables their personal space (`users.sh role` asks first): the files stay, but they can't reach them, and their shares and public links from it stop working. Only an admin can enable it again (oc-custom's reva patch 2); `users.sh role` back to `user` or `admin` does, and the shares and links work again. To get rid of the files for good, delete the space in Admin settings → Spaces.
 - With Authelia, OpenCloud's own password for each user is random and unused; passwords are checked by Authelia only.
 - `users.sh` starts one helper container (the pinned yq image) per run and removes it at exit; Authelia's password hashes are made in the running Authelia container. On a small VM an `add` with Authelia takes about 8–14 s.
@@ -64,6 +67,38 @@ The desktop and mobile apps connect to `https://<your domain>` as usual. They op
 
 **Lost phone:** `./users.sh reset-2fa <user>`. The user signs in with their password; an admin is then asked to register a new app straight away.
 
+## The management API (optional, from 7.2.4-9)
+A small API for a management tool on another machine, so the tool needs neither SSH to this server nor OpenCloud's impersonation (an admin token that can act as every user). The tool keeps managing OpenCloud's users, groups and shares through OpenCloud's own API with an admin app token; this API does only what that can't:
+
+| | Endpoint | Does |
+|---|---|---|
+| | `GET /v1/info` | OpenCloud's version, whether Authelia is used, and whether its configuration asks the `2fa` group for 2FA |
+| Authelia | `GET /v1/authelia/users` | the entries: name, display name, e-mail, disabled, admin, two_factor (no password hashes) |
+| | `PUT /v1/authelia/users/<name>` | creates the entry or changes it: `{"displayname", "email", "disabled", "password", "two_factor"}` (a new one needs a display name and a password). `two_factor` puts the user in the `2fa` group or takes them out (see Users); 409 if `authelia/configuration.yml` has no rule for it yet |
+| | `DELETE /v1/authelia/users/<name>` | removes the entry |
+| | `POST /v1/authelia/users/<name>/reset-2fa` | removes the user's 2FA devices, as `users.sh reset-2fa` |
+| OpenCloud | `GET`, `PUT /v1/opencloud/users/<name>/emails` | the user's "Disable Email Notifications": `{"disabled": true}` mutes all of OpenCloud's e-mails to them |
+| | `POST /v1/opencloud/users/<name>/personal-space` | creates a User's personal space (so its quota can be set) and returns its id; other types get 409 |
+
+All under `https://<your domain>/manage-api/`, with the header `Authorization: Bearer <token>`; answers are JSON. Without Authelia the Authelia endpoints answer 404.
+
+**Turning it on:**
+1. Use 7.2.4-9 or later (`OC_IMAGE`).
+2. In `.env`, add the API to `COMPOSE_FILE`: `compose.yaml:compose.authelia.yaml:compose.manage.yaml:compose.manage-authelia.yaml` with Authelia, `compose.yaml:compose.manage.yaml` without (`.env.example` has both).
+3. `./setup.sh`: it shows the API's token **once**; enter it in the management tool. Only its SHA-256 is kept (`manage-api/token.sha256`). `./setup.sh --new-manage-token` replaces it, and the old one stops working at once.
+4. Copy the rewritten `swag/<OC_STACK>.subdomain.conf` to SWAG again and restart SWAG (the site has a `/manage-api/` location; without the API it answers 502).
+5. `docker compose up -d`.
+
+**What protects it:**
+- **It never acts on admins:** any change to a member of Authelia's `admins` group or to an OpenCloud Admin is refused (403), and nobody can be added to `admins` or taken out of it. So it can't turn an admin's 2FA off either: admins get 2FA from `admins`, and `two_factor` only changes the separate `2fa` group. Admins stay with `users.sh` on the server. So a leaked token reaches only the other accounts, which the management tool's admin app token can reach anyway.
+- **The token:** 256 random bits, compared in constant time; after 10 wrong tokens from one address within 10 minutes, that address is refused for the rest of the 10 minutes.
+- **Per-user tokens never leave the server:** for the OpenCloud endpoints the API makes an app token for that one user with OpenCloud's own CLI, valid for a minute, does the one thing and revokes it.
+- **Authelia's user file** is changed exactly as `users.sh` does it (the same lock, the whole file checked, then renamed into place), so both can be used side by side. Password hashes and 2FA resets use Authelia's own code (its CLI is in the image, the same version as `AUTHELIA_IMAGE`).
+- **Every change is logged** (`docker compose logs manage-api`), without passwords.
+- **Only reachable through SWAG:** no port of its own. To let only the management tool's address in, uncomment the `allow`/`deny` lines in the site's `/manage-api/` location.
+
+**How it runs:** its own container (`<OC_STACK>-manage-api`, from the oc-custom image) in OpenCloud's container's network namespace, because OpenCloud's CLI needs OpenCloud's internal services, which listen only inside it. It mounts OpenCloud's `config/` read-only and, with Authelia, Authelia's files as Authelia's container does. So it holds both secrets, and is as sensitive as those containers; what it offers over the network is only the table above. When OpenCloud's container restarts, the API exits within 90 seconds and Docker starts it again in OpenCloud's new namespace.
+
 ## Without SMTP
 Authelia writes each one-time code (registering 2FA, changing a password, "Reset password" on the sign-in page) to `authelia/data/notification.txt` instead of e-mailing it; the newest is at the end:
 ```
@@ -75,7 +110,8 @@ OpenCloud sends no e-mails at all (no share notifications).
 Back up the whole folder. With the stack stopped (`docker compose stop`) the copy is consistent:
 - `config/`, `data/`: OpenCloud's configuration and all files;
 - `authelia/`: the user file (passwords), the database (`authelia/data/db.sqlite3`: the users' 2FA devices) and the secrets (`authelia/secrets/`: without them the database can't be read);
-- `.env`.
+- `.env`;
+- with the management API: `manage-api/` (its token's hash; or make a new token after a restore).
 
 ## Updating
 Each oc-custom release names the OpenCloud image and the Authelia version it was tested with (`versions.env` in the repo). Change `OC_IMAGE` and `AUTHELIA_IMAGE` in `.env` to those, then:
@@ -85,7 +121,7 @@ docker compose pull && docker compose up -d
 Take a backup first when the release notes say an update is one-way (e.g. OpenCloud 7 → 8).
 
 ## Notes and troubleshooting
-- **Logs:** `docker compose logs -f opencloud`, `docker compose logs -f authelia`.
+- **Logs:** `docker compose logs -f opencloud`, `docker compose logs -f authelia`, `docker compose logs -f manage-api`.
 - **A broken user file stops Authelia.** `users.sh` checks the file before replacing it. If you edit `authelia/users/users_database.yml` by hand, keep it valid YAML; Authelia reloads it within seconds (`docker compose logs authelia` shows "Reloaded successfully").
 - **Too many attempts:** Authelia rate-limits one-time code requests and bans a user for a few minutes after repeated wrong passwords. `docker compose restart authelia` clears both.
 - **The SWAG site keeps redirects to `http://127.0.0.1` unchanged** (SWAG's `proxy.conf` would turn them into `https://`): the desktop app's sign-in ends with one. Keep those two `proxy_redirect` lines if you edit the site.
