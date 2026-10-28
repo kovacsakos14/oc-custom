@@ -4,8 +4,10 @@
 # skipped), Mailpit for the e-mails, and deploy/ copied twice: with Authelia,
 # then without it. Everything runs on its own Docker network and is removed
 # afterwards. Needs Docker; about 10 minutes.
-#   test/deploy/run.sh [--image IMAGE] [--keep]
+#   test/deploy/run.sh [--image IMAGE] [--manage-api-image IMAGE] [--keep]
 #     --image  the oc-custom image (default: the one versions.env builds)
+#     --manage-api-image  another image for the Authelia stack's management
+#              API (MANAGE_API_IMAGE; default: the one in the oc-custom image)
 #     --keep   leave everything running (remove it with --clean)
 #   test/deploy/run.sh --clean
 set -euo pipefail
@@ -15,10 +17,12 @@ here="$repo/test/deploy"
 source "$repo/versions.env"
 
 IMAGE="ghcr.io/kovacsakos14/oc-custom:${OC_VERSION#v}-$BUILD"
+API_IMAGE=""
 KEEP=""
 while [ $# -gt 0 ]; do
     case "$1" in
         --image) IMAGE="$2"; shift 2 ;;
+        --manage-api-image) API_IMAGE="$2"; shift 2 ;;
         --keep) KEEP=1; shift ;;
         --clean) KEEP=clean; shift ;;
         *) sed -n '2,13p' "$0" >&2; exit 1 ;;
@@ -90,6 +94,9 @@ stack() {
         -e "s/^SMTP_HOST=.*/SMTP_HOST=dtest-mailpit/" -e "s/^SMTP_PORT=.*/SMTP_PORT=1025/" \
         -e "s/^SMTP_ENCRYPTION=.*/SMTP_ENCRYPTION=none/" -e "s/^SMTP_AUTHENTICATION=.*/SMTP_AUTHENTICATION=none/" \
         "$dir/.env.example" > "$dir/.env"
+    if [ "$authelia" = yes ] && [ -n "$API_IMAGE" ]; then
+        sed -i "s|^#MANAGE_API_IMAGE=.*|MANAGE_API_IMAGE=$API_IMAGE|" "$dir/.env"
+    fi
     # The management API's token is shown once, indented on its own line
     (cd "$dir" && ./setup.sh) | awk '/shown only now/ { f = 1 } f && /^    [A-Za-z0-9_-]{43}$/ { print $1; exit }' > "$dir/.manage-token"
     [ -s "$dir/.manage-token" ] || { echo "setup.sh showed no management API token" >&2; exit 1; }
@@ -178,6 +185,9 @@ check "Authelia logs the client's address, not one the client sent (X-Forwarded-
 check "OpenCloud runs notifications (SMTP set) and not its own sign-in (idp)" \
     'services="$(docker compose exec -T opencloud opencloud list)"; grep -q " notifications " <<< "$services" && ! grep -q " idp " <<< "$services"'
 check "users.sh email admin" './users.sh email admin admin@deploy.test'
+check "SWAG adds the \"Back to your files\" script to Authelia's pages and serves it" \
+    'curl_ "https://$DOMAIN/authelia/settings" | grep -qF "<script src=\"/authelia-back.js\" defer></script></head>" &&
+     curl_ "https://$DOMAIN/authelia-back.js" | grep -qF "Back to your files"'
 check "Authelia has no OIDC sign-out endpoint; the web signs out at its /logout (config.json logoutUrl)" \
     '! curl_ "https://$DOMAIN/.well-known/openid-configuration" | grep -q end_session_endpoint &&
      curl_ "https://$DOMAIN/config.json" | grep -Eq "\"logoutUrl\": ?\"https://$DOMAIN/authelia/logout\\?rd="'
@@ -252,6 +262,8 @@ check "users.sh revokes its app token when it's done" \
 check "the user file is private (600)" '[ "$(stat -c %a authelia/users/users_database.yml)" = 600 ]'
 
 echo "  --    the management API (with Authelia), at ${SECONDS}s"
+check "the API runs from MANAGE_API_IMAGE when it's set, else from OC_IMAGE" \
+    '[ "$(docker inspect -f "{{.Config.Image}}" "$(docker compose ps -q manage-api)")" = "${API_IMAGE:-$IMAGE}" ]'
 check "setup.sh stored only the token's SHA-256 (600)" \
     '[ "$(stat -c %a manage-api/token.sha256)" = 600 ] && ! grep -qF "$(cat .manage-token)" manage-api/token.sha256'
 check "the API refuses a missing or wrong token (401)" \

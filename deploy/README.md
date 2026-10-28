@@ -87,6 +87,8 @@ All under `https://<your domain>/manage-api/`, with the header `Authorization: B
 2. In `.env`, add the API to `COMPOSE_FILE`: `compose.yaml:compose.authelia.yaml:compose.manage.yaml:compose.manage-authelia.yaml` with Authelia, `compose.yaml:compose.manage.yaml` without (`.env.example` has both).
 3. `./setup.sh`: it shows the API's token **once**; enter it in the management tool. Only its SHA-256 is kept (`manage-api/token.sha256`). `./setup.sh --new-manage-token` replaces it, and the old one stops working at once.
 4. Copy the rewritten `swag/<OC_STACK>.subdomain.conf` to SWAG again and restart SWAG (the site has a `/manage-api/` location; without the API it answers 502).
+
+The API runs from the oc-custom image (`OC_IMAGE`). `MANAGE_API_IMAGE` in `.env` (from 7.2.4-10) runs it from another image of it instead, one with its own release cycle; `setup.sh` then makes the token with that image. The server must be able to pull it (`docker login` first for a private registry).
 5. `docker compose up -d`.
 
 **What protects it:**
@@ -124,6 +126,7 @@ Take a backup first when the release notes say an update is one-way (e.g. OpenCl
 - **Logs:** `docker compose logs -f opencloud`, `docker compose logs -f authelia`, `docker compose logs -f manage-api`.
 - **A broken user file stops Authelia.** `users.sh` checks the file before replacing it. If you edit `authelia/users/users_database.yml` by hand, keep it valid YAML; Authelia reloads it within seconds (`docker compose logs authelia` shows "Reloaded successfully").
 - **Too many attempts:** Authelia rate-limits one-time code requests and bans a user for a few minutes after repeated wrong passwords. `docker compose restart authelia` clears both.
+- **"Back to your files" on Authelia's settings pages:** Authelia leaves users on its settings page after they register 2FA or change their password, with no way back to OpenCloud. The SWAG site adds a button there (from 7.2.4-10): it serves a small script at `/authelia-back.js` and adds it to Authelia's pages (`sub_filter`; Authelia's pages run scripts only from the same site). The button goes to `/`; someone just asked for 2FA then types their new code and lands in their files. It's in Hungarian when Authelia's language (or else the browser's) is. Keep the `sub_filter` lines and that location if you edit the site.
 - **The SWAG site keeps redirects to `http://127.0.0.1` unchanged** (SWAG's `proxy.conf` would turn them into `https://`): the desktop app's sign-in ends with one. Keep those two `proxy_redirect` lines if you edit the site.
 - **OpenCloud reaches its own domain through SWAG** (`extra_hosts: <domain>:host-gateway` in `compose.yaml`), so SWAG must listen on this server's port 443.
 - **Switching between the variants later:** the users' passwords live in different places (OpenCloud or Authelia), so everyone needs a new password after a switch (`users.sh passwd`, which also creates the missing Authelia entry).

@@ -1,5 +1,6 @@
 // admin: password, then Authelia makes them register a TOTP app (code by
-// e-mail) and they sign in with it. Then, on Authelia's settings page, they
+// e-mail) on its settings page, where the SWAG site's "Back to your files"
+// button takes them on: their new code, then OpenCloud's files. Then, on Authelia's settings page, they
 // remove the app and register a new one, and sign in with the new one.
 const { O, A, launch, signIn, inFiles, shot, text, sleep, click, registerTotp, elevate, freshTotp, run } = require('./lib');
 const PASS = process.env.ADMIN_PASSWORD, EMAIL = process.env.ADMIN_EMAIL;
@@ -27,6 +28,18 @@ run(async () => {
   await click(p, '#register-link');
   const first = await registerTotp(p, EMAIL);
   console.log('OK admin had to register a TOTP app at the first sign-in');
+  // Authelia stays on its settings page; the button leads back
+  await p.waitForFunction(() => {
+    const a = document.querySelector('#back-to-files');
+    return a && getComputedStyle(a).display !== 'none' && a.getAttribute('href') === '/';
+  }, { timeout: 10000 });
+  await shot(p, 'admin-2fa-back-button');
+  await click(p, '#back-to-files');
+  await p.waitForSelector('#otp-input input', { timeout: 20000 });
+  await p.click('#otp-input input');
+  await p.keyboard.type(await freshTotp(first));
+  await inFiles(p);
+  console.log('OK "Back to your files" on the settings page led to their code, then their files');
   await b.close();
 
   b = await launch();
