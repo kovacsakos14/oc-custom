@@ -8,4 +8,5 @@
 /authelia/.users.lock
 /authelia/data/
 /authelia/secrets/
+/manage-api/
 /swag/*.subdomain.conf

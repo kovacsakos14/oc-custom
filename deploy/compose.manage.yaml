@@ -1,0 +1,29 @@
+# Adds the management API (README "The management API") to compose.yaml: a
+# small API in the oc-custom image that a management tool calls through SWAG
+# (https://<OC_DOMAIN>/manage-api/) instead of SSH and OpenCloud's
+# impersonation. Its token: setup.sh. With Authelia, add
+# compose.manage-authelia.yaml too.
+
+services:
+  manage-api:
+    image: ${OC_IMAGE}
+    container_name: ${OC_STACK}-manage-api
+    user: "${PUID}:${PGID}"
+    entrypoint: [manage-api, serve]
+    # OpenCloud's network namespace: OpenCloud's CLI here (a user's app
+    # token for one action) talks to OpenCloud's internal services, which
+    # listen on 127.0.0.1 only. SWAG reaches the API at
+    # <OC_STACK>-opencloud:9300. When OpenCloud's container restarts, this
+    # one exits within 90 seconds and its restart finds the new namespace.
+    network_mode: service:opencloud
+    depends_on: [opencloud]
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    volumes:
+      # OpenCloud's config, for its CLI
+      - ./config:/etc/opencloud:ro
+      # token.sha256 (setup.sh)
+      - ./manage-api:/etc/manage-api:ro
+    restart: unless-stopped

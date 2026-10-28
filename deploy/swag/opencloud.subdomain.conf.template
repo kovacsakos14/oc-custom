@@ -36,6 +36,22 @@ server {
         proxy_pass $upstream_proto://$upstream_app:$upstream_port;
     }
 
+    # The management API (compose.manage.yaml), in OpenCloud's container's
+    # network namespace; without it this answers 502. Only a management tool
+    # needs it: to let only its address in, uncomment and fill in
+    #     allow 203.0.113.7;
+    #     deny all;
+    location /manage-api/ {
+        include /config/nginx/proxy.conf;
+        include /config/nginx/resolver.conf;
+        set $upstream_app {{OC_STACK}}-opencloud;
+        set $upstream_port 9300;
+        set $upstream_proto http;
+        # The API's paths start at /v1/
+        rewrite ^/manage-api(/.*)$ $1 break;
+        proxy_pass $upstream_proto://$upstream_app:$upstream_port;
+    }
+
     location / {
         include /config/nginx/proxy.conf;
         include /config/nginx/resolver.conf;

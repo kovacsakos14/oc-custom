@@ -1,10 +1,20 @@
 #!/usr/bin/env bash
 # Prepares this folder for docker compose: checks .env, fills in PUID/PGID,
-# creates the folders, writes SWAG's site, and with Authelia its secrets and
-# the first user (admin). Safe to run again: it never replaces what exists.
+# creates the folders, writes SWAG's site, with Authelia its secrets and the
+# first user (admin), and with the management API its token. Safe to run
+# again: it never replaces what exists.
+#   ./setup.sh                     prepare (again)
+#   ./setup.sh --new-manage-token  also replace the management API's token
 set -euo pipefail
 cd "$(dirname "$0")"
 . ./lib.sh
+
+new_manage_token=""
+case "${1-}" in
+    "") ;;
+    --new-manage-token) new_manage_token=1 ;;
+    *) die "Usage: ./setup.sh [--new-manage-token]" ;;
+esac
 
 for k in OC_STACK OC_DOMAIN OC_IMAGE SWAG_NETWORK; do
     [ -n "$(conf "$k")" ] || die "Set $k in .env"
@@ -30,6 +40,15 @@ fi
 if with_authelia; then
     for k in AUTHELIA_IMAGE ADMIN_EMAIL; do [ -n "$(conf "$k")" ] || die "Set $k in .env"; done
 fi
+# The management API's Authelia part goes with both or neither
+case "$(conf COMPOSE_FILE)" in *compose.manage-authelia.yaml*) manage_authelia=1 ;; *) manage_authelia="" ;; esac
+if with_manage && with_authelia && [ -z "$manage_authelia" ]; then
+    die "COMPOSE_FILE: with Authelia, the management API needs compose.manage-authelia.yaml too"
+fi
+if [ -n "$manage_authelia" ] && ! { with_manage && with_authelia; }; then
+    die "COMPOSE_FILE: compose.manage-authelia.yaml goes with compose.authelia.yaml and compose.manage.yaml"
+fi
+[ -z "$new_manage_token" ] || with_manage || die "--new-manage-token: no management API (COMPOSE_FILE in .env)"
 chmod 600 .env
 
 # The user running this owns everything; OpenCloud and Authelia run as it
@@ -78,6 +97,9 @@ if with_authelia; then
         rm -f authelia/secrets/oidc.pub
     fi
     chmod 600 authelia/secrets/*
+    # users.sh's lock; the management API's container mounts it (as a file,
+    # so it has to exist first)
+    touch authelia/.users.lock
 
     if [ ! -f "$USERS_FILE" ]; then
         # The admin, with OpenCloud's admin password and 2FA (group admins)
@@ -90,6 +112,20 @@ if with_authelia; then
             "email": strenv(Y_EMAIL), "password": strenv(Y_HASH), "disabled": false, "groups": ["admins"]}'
         echo "Wrote $USERS_FILE with admin (group admins: 2FA required)"
     fi
+fi
+
+# The management API's token: shown once, only its SHA-256 is kept (the API
+# reads it at each request, so a new one works without a restart)
+manage_token=""
+if with_manage && { [ -n "$new_manage_token" ] || [ ! -s manage-api/token.sha256 ]; }; then
+    mkdir -p manage-api
+    out="$(docker run --rm --entrypoint manage-api "$(conf OC_IMAGE)" new-token)" ||
+        die "Couldn't make the management API's token (is OC_IMAGE 7.2.4-9 or later?)"
+    manage_token="$(sed -n 's/^token: //p' <<< "$out")"
+    hash="$(sed -n 's/^sha256: //p' <<< "$out")"
+    [ -n "$manage_token" ] && [ -n "$hash" ] || die "Couldn't make the management API's token"
+    (umask 077; echo "$hash" > manage-api/token.sha256.new)
+    mv manage-api/token.sha256.new manage-api/token.sha256
 fi
 
 cat <<EOF
@@ -106,5 +142,16 @@ if with_authelia; then
    Authelia asks the admin to register a 2FA app first. The one-time code for
    that goes to ADMIN_EMAIL (without SMTP: authelia/data/notification.txt).
 4. Users: ./users.sh help
+EOF
+fi
+if [ -n "$manage_token" ]; then
+    cat <<EOF
+
+The management API's token (shown only now; enter it in your management
+tool, with https://$(conf OC_DOMAIN)/manage-api/ as the address):
+
+    $manage_token
+
+A new one, which replaces it: ./setup.sh --new-manage-token
 EOF
 fi

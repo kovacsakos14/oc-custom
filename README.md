@@ -74,6 +74,8 @@ Everything else is upstream's: the image is the official one with only `/usr/bin
 ## Deploying
 **A complete server behind SWAG, optionally with sign-in with 2FA (Authelia):** the [`deploy/`](deploy/) folder (compose files, Authelia's config, the SWAG site, `setup.sh` and `users.sh`). Its [README](deploy/README.md) walks through setting it up, users, 2FA, backups and updates.
 
+**The management API (optional, from 7.2.4-9):** a small API in the image that a management tool on another machine calls through SWAG, instead of SSH to the server and OpenCloud's impersonation: Authelia's users (create, password, disable, e-mail, reset 2FA) and, for one user at a time, OpenCloud's e-mail notifications and a User's personal space. It never acts on admins. `deploy/` runs it as an add-on; see [its README](deploy/README.md#the-management-api-optional-from-724-9).
+
 **Your own compose file:** compared with one for the official image, two lines change:
 ```yaml
 services:
@@ -147,7 +149,8 @@ The build needs more memory than a small VM has (the Go link step alone takes se
 1. Fetch the upstream sources at the pinned versions and apply the patches.
 2. Build the patched web, cached in `out/web-dist` and rebuilt only when its version or patches change. Every build image is pinned by digest, and pnpm by version and hash (`PNPM_VERSION`, `PNPM_SHA512` in `versions.env`; the build adds the hash to the web's `packageManager`, so corepack checks the download, and stops if upstream pins another pnpm).
 3. Build the IDP frontend (patched), then the server binary in upstream's `golang-ci` image with the official image's target (`release-linux-docker-amd64`, libvips). The server vendors its dependencies, so the reva patches go into its vendored reva (the same version as `REVA_VERSION`).
-4. Copy the binary into the official image (`Dockerfile`), and check that it runs and finds its libraries.
+4. Vet, test and build the management API (`manage-api/`, Go, static), and fetch Authelia's own musl build of the pinned version for it (`AUTHELIA_MUSL_URL`, checked against `AUTHELIA_MUSL_SHA256`: the Authelia image's binary needs glibc, and this image is Alpine).
+5. Copy the binaries into the official image (`Dockerfile`), and check that they run and that OpenCloud finds its libraries.
 
 Manual runs keep caches (pnpm store, Go modules and build cache, the web) between runs; a release (tag) builds from nothing, so nothing another run left in a cache can end up in it. Only amd64 is built.
 
@@ -192,7 +195,7 @@ Builds are tested in a separate OpenCloud test environment (Docker Compose, not 
 - `test/browser <out dir> user:password …` signs in as each user in a fresh browser profile. It saves screenshots and records where they landed, whether files show as a table, the left menu, the app menu and what "Shared with me" offers (hide buttons, the hidden-shares switch). With `ACTIONS="client1:Client folder/readme.txt"` it also opens that file's context menu and lists its actions (rename, move, delete…); with `NEW=1` it lists the "New" menu in Personal and in those shares; with `OPEN="client1:Client folder/readme.txt"` it opens the file in its app and records whether it's editable; with `PREFS=1` it lists Preferences' notification sections; with `SEARCH="admin:client1"` it types into the share dialog and lists who it offers.
 - `test/check-permissions <user> <share>` lists what OpenCloud reports for each item in a share (`oc:permissions`) as the recipient sees it. A "Can't delete" share shows `NV` (root `SNVCK`), "Can upload" upstream's `SCK` and nothing on files.
 - `scripts/smoke-test <image>` starts an image with a fresh config and checks the version, the branding, the web UI, the user types, the share role and its icon, and the image's defaults (CI runs it on every build).
-- `test/deploy/run.sh [--image <image>] [--keep]` tests `deploy/` from scratch, about 10 minutes, Docker only: the real SWAG image (with a self-signed certificate; Let's Encrypt is skipped) and Mailpit on their own network, then the stack with Authelia and without it. It checks `setup.sh` and every `users.sh` command (also creating Clients and Employees), and in a browser: a user signing in with a password only, "Change password" opening Authelia's page and changing the password there, a disabled user refused, the desktop app's sign-in (PKCE, its loopback redirect, refresh), the admin registering 2FA at the first sign-in, removing and re-registering it on Authelia's settings page and after `users.sh reset-2fa`; without Authelia, OpenCloud's own sign-in and password dialog. `--keep` leaves it running; `--clean` removes it.
+- `test/deploy/run.sh [--image <image>] [--keep]` tests `deploy/` from scratch, about 10 minutes, Docker only: the real SWAG image (with a self-signed certificate; Let's Encrypt is skipped) and Mailpit on their own network, then the stack with Authelia and without it. It checks `setup.sh` and every `users.sh` command (also creating Clients and Employees), and in a browser: a user signing in with a password only, "Change password" opening Authelia's page and changing the password there, a disabled user refused, the desktop app's sign-in (PKCE, its loopback redirect, refresh), the admin registering 2FA at the first sign-in, removing and re-registering it on Authelia's settings page and after `users.sh reset-2fa`; without Authelia, OpenCloud's own sign-in and password dialog. With the management API on both stacks: its token through SWAG, an Authelia entry created, disabled and given a new password through it (and signing in with it), Reset 2FA, muting e-mails and a personal space with impersonation off, no token left behind, every change to an admin refused, `users.sh` and the API changing Authelia's file at the same time, the API following an OpenCloud restart, and a new token from `setup.sh`. `--keep` leaves it running; `--clean` removes it.
 - Unit tests: each patch brings its own (Go for server and reva, vitest for the web; reva's need `golang:1.25-alpine`). The build doesn't run them; see `CLAUDE.md`.
 
 **What to check for each new build** (`test/type-users`, then `test/browser` with `NEW=1 PREFS=1` and `ACTIONS`/`OPEN` on `zz-types/note.txt`, plus an upstream User and the admin):
@@ -215,7 +218,8 @@ Builds are tested in a separate OpenCloud test environment (Docker Compose, not 
 - `scripts/build-native`, `Dockerfile`: the build.
 - `scripts/smoke-test`: the image check.
 - `branding/example`: an example branding folder.
-- `deploy/`: a complete server behind SWAG, with or without Authelia (its own README).
+- `deploy/`: a complete server behind SWAG, with or without Authelia, optionally with the management API (its own README).
+- `manage-api/`: the management API (Go), in the image as `manage-api`, with Authelia's CLI as `authelia`.
 - `test/`: the test helpers (`local.env.example` for your test environment); `test/deploy/`: the test of `deploy/`.
 - `CLAUDE.md`: working notes for continuing development (decisions, findings, next steps).
 

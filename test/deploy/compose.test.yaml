@@ -5,4 +5,7 @@ services:
     extra_hosts: !reset []
     environment:
       OC_INSECURE: "true"
-
+  manage-api:
+    environment:
+      # The restart check needn't wait 90 s for the API to follow OpenCloud
+      MANAGE_API_WATCHDOG: 15s
