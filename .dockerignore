@@ -1,2 +1,4 @@
 *
 !out/opencloud
+!out/manage-api
+!out/authelia

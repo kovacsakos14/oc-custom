@@ -62,3 +62,10 @@ grep -Eq '"notifications": ?\{[^}]*"configurable": ?true' <<<"$caps" || fail "no
 webconf="$(curl -fsk "$url/config.json")" || fail "the web's config.json doesn't answer"
 grep -Eq '"disableFeedbackLink": ?true' <<<"$webconf" || fail "the feedback button isn't off by default"
 echo "ok  image defaults"
+
+# The management API's binaries (deploy/compose.manage.yaml)
+tools="$(docker run --rm --entrypoint sh "$image" -c 'manage-api new-token && authelia --version')" || fail "manage-api or authelia doesn't run: $tools"
+grep -Eq '^sha256: [0-9a-f]{64}$' <<<"$tools" || fail "manage-api new-token: $tools"
+authelia_version="${AUTHELIA_IMAGE#*:}"
+grep -q "^authelia version v${authelia_version%@*}$" <<<"$tools" || fail "authelia isn't versions.env's ${authelia_version%@*}: $tools"
+echo "ok  management API"
