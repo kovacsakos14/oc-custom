@@ -28,12 +28,45 @@ server {
         # client sent. nginx sends both headers in order, so the real address
         # comes first.
         proxy_set_header X-Forwarded-For $remote_addr;
+        # Authelia's settings pages (where 2FA is registered and passwords are
+        # changed) have no way back to OpenCloud: its pages get the script
+        # below, which adds a "Back to your files" button there. Plain HTML
+        # from Authelia (no compression) so the line can be added.
+        proxy_set_header Accept-Encoding "";
+        sub_filter '</head>' '<script src="/authelia-back.js" defer></script></head>';
+        sub_filter_once on;
         include /config/nginx/proxy.conf;
         include /config/nginx/resolver.conf;
         set $upstream_app {{OC_STACK}}-authelia;
         set $upstream_port 9091;
         set $upstream_proto http;
         proxy_pass $upstream_proto://$upstream_app:$upstream_port;
+    }
+
+    # The button for Authelia's settings pages (see above): a link to
+    # OpenCloud, shown while the address is /authelia/settings…; in Hungarian
+    # when Authelia's language (or else the browser's) is. Authelia's pages allow scripts from this
+    # site only, so it's served here.
+    location = /authelia-back.js {
+        default_type "application/javascript; charset=utf-8";
+        add_header Cache-Control "no-cache";
+        return 200 '(function () {
+  var lang = navigator.language || "";
+  try { lang = localStorage.getItem("i18nextLng") || lang; } catch (e) {}
+  var hu = /^hu/i.test(lang);
+  var a = document.createElement("a");
+  a.href = "/";
+  a.id = "back-to-files";
+  a.textContent = hu ? "← Vissza a fájljaihoz" : "← Back to your files";
+  var s = a.style;
+  s.position = "fixed"; s.top = "12px"; s.left = "50%"; s.transform = "translateX(-50%)"; s.zIndex = "2000";
+  s.padding = "8px 16px"; s.borderRadius = "6px"; s.background = "#fff"; s.color = "#1976d2";
+  s.textDecoration = "none"; s.font = "500 14px system-ui, sans-serif"; s.boxShadow = "0 1px 4px rgba(0,0,0,.3)";
+  function show() { s.display = location.pathname.indexOf("/authelia/settings") === 0 ? "block" : "none"; }
+  function start() { document.body.appendChild(a); show(); setInterval(show, 500); }
+  if (document.body) start(); else document.addEventListener("DOMContentLoaded", start);
+})();
+';
     }
 
     # The management API (compose.manage.yaml), in OpenCloud's container's

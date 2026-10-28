@@ -6,7 +6,8 @@
 
 services:
   manage-api:
-    image: ${OC_IMAGE}
+    # The API in the oc-custom image, or another image of it (MANAGE_API_IMAGE)
+    image: ${MANAGE_API_IMAGE:-${OC_IMAGE}}
     container_name: ${OC_STACK}-manage-api
     user: "${PUID}:${PGID}"
     entrypoint: [manage-api, serve]
