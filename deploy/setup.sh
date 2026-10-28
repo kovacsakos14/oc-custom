@@ -82,7 +82,7 @@ sed -e "s/{{OC_STACK}}/$(conf OC_STACK)/g" -e "s/{{OC_DOMAIN}}/$(conf OC_DOMAIN)
 echo "Wrote $site"
 
 if with_authelia; then
-    mkdir -p authelia/users authelia/data authelia/secrets
+    mkdir -p authelia/users authelia/data authelia/secrets authelia/assets
     chmod 700 authelia/secrets authelia/data
     image="$(conf AUTHELIA_IMAGE)"
     for s in jwt session storage hmac; do
@@ -117,6 +117,9 @@ fi
 # The management API's token: shown once, only its SHA-256 is kept (the API
 # reads it at each request, so a new one works without a restart)
 manage_token=""
+# The API's records; Docker would create it as root
+! with_manage || mkdir -p manage-api/state
+
 if with_manage && { [ -n "$new_manage_token" ] || [ ! -s manage-api/token.sha256 ]; }; then
     mkdir -p manage-api
     api_image="$(conf MANAGE_API_IMAGE)"

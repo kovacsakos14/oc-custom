@@ -271,6 +271,19 @@ check "the API refuses a missing or wrong token (401)" \
      [ "$(curl_ -o /dev/null -w "%{http_code}" -H "Authorization: Bearer wrong" "https://$DOMAIN/manage-api/v1/info")" = 401 ]'
 check "info through SWAG: OpenCloud's version and Authelia" \
     'mbody GET /v1/info | grep -q "\"opencloud\":\"$(curl_ "https://$DOMAIN/status.php" | sed -n "s/.*\"productversion\": *\"\([^\"]*\)\".*/\1/p")\",\"authelia\":true"'
+check "Authelia shows its own logo until authelia/assets has a logo.png, then that one at once" \
+    'curl_ "https://$DOMAIN/authelia/" | grep -q "logooverride=\"false\"" &&
+     printf "\211PNG\r\n\032\nlogo" > authelia/assets/logo.png &&
+     curl_ "https://$DOMAIN/authelia/" | grep -q "logooverride=\"true\"" &&
+     [ "$(curl_ "https://$DOMAIN/authelia/static/media/logo.png" | head -c 4 | tail -c 3)" = PNG ] && rm authelia/assets/logo.png'
+check "the API keeps its records in manage-api/state (owned by PUID)" \
+    '[ "$(stat -c %u manage-api/state)" = "$(id -u)" ] && docker compose exec -T manage-api test -w /var/lib/manage-api'
+# Only an API image with branding has /v1/branding (--manage-api-image)
+check "with an API that brands: a name saved through it is OpenCloud's at once, the old version kept" \
+    'if mbody GET /v1/info | grep -q "\"branding\":true"; then
+         [ "$(mcode PUT /v1/branding "{\"fields\":{\"name\":\"Deploy Test\"},\"by\":\"run.sh\"}")" = 200 ] &&
+         curl_ "https://$DOMAIN/themes/opencloud/theme.json" | grep -q "Deploy Test" && [ -n "$(ls manage-api/state/branding)" ]
+     fi'
 # A Client made in OpenCloud only (as a management tool does), then its Authelia entry through the API
 check "a Client created in OpenCloud gets its Authelia entry through the API and signs in" \
     '[ "$(curl_ -u "admin:$(admin_token)" -H "Content-Type: application/json" -o /dev/null -w "%{http_code}" \
