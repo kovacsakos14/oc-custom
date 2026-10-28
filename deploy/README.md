@@ -5,7 +5,7 @@ This folder is a complete OpenCloud server: oc-custom, optionally [Authelia](htt
 | | With Authelia (default) | Without Authelia |
 |---|---|---|
 | Sign-in page | Authelia's, at `https://<your domain>/authelia` | OpenCloud's own |
-| 2FA | Required for admins (an authenticator app); others sign in with their password | None |
+| 2FA | Required for admins (an authenticator app); others sign in with their password unless they're in the `2fa` group (`users.sh 2fa`) | None |
 | Passwords live in | Authelia's user file (`authelia/users/`) | OpenCloud |
 | "Change password" in OpenCloud | Opens Authelia's page (password, and the user's own 2FA) | OpenCloud's dialog |
 | "Log out" in OpenCloud | Also ends the Authelia session, so the next sign-in asks for the password | OpenCloud's own |
@@ -47,11 +47,13 @@ The desktop and mobile apps connect to `https://<your domain>` as usual. They op
 ./users.sh disable anna / enable anna
 ./users.sh delete anna                     # deletes her files too; asks to confirm
 ./users.sh reset-2fa anna                  # lost phone: removes her 2FA devices
+./users.sh 2fa anna on                     # she needs 2FA too (off: password only again)
 ```
 - A password can come from stdin instead of the prompt: `echo 'secret' | ./users.sh passwd anna`. `--random` makes one up and shows it once.
 - Passwords need at least 3 characters, in `users.sh`, `setup.sh` and (with Authelia) on Authelia's pages. That's deliberately low for now: raise `PASSWORD_MIN_LENGTH` in `lib.sh` and `password_policy` in `authelia/configuration.yml` together.
 - **Roles:** `client` and `employee` are oc-custom's file-server types (no personal space; clients get folders shared as "Can't delete", staff as "Can edit"; see the [main README](../README.md#user-types-and-the-cant-delete-role)). `user`, `admin` and `light` are upstream's (User, Admin, User Light) with upstream's web UI. `add` without `--role` makes a `user`.
 - **Admins** (`--role admin`) are in Authelia's `admins` group, so they need 2FA. Changing the role with `users.sh role` changes both.
+- **2FA for other users:** `users.sh 2fa <user> on` puts them in Authelia's `2fa` group, which `authelia/configuration.yml` asks for 2FA as it asks admins. At their next sign-in they register an authenticator app; `off` takes them out again (their registered app stays until `reset-2fa`). Admins always need 2FA, so `2fa` refuses them. A server set up before 7.2.4-9 needs the new `authelia/configuration.yml` first (the `group:2fa` rule; `users.sh 2fa` says so).
 - **Changing a `user` or `admin` to `client`, `employee` or `light`** disables their personal space (`users.sh role` asks first): the files stay, but they can't reach them, and their shares and public links from it stop working. Only an admin can enable it again (oc-custom's reva patch 2); `users.sh role` back to `user` or `admin` does, and the shares and links work again. To get rid of the files for good, delete the space in Admin settings → Spaces.
 - With Authelia, OpenCloud's own password for each user is random and unused; passwords are checked by Authelia only.
 - `users.sh` starts one helper container (the pinned yq image) per run and removes it at exit; Authelia's password hashes are made in the running Authelia container. On a small VM an `add` with Authelia takes about 8–14 s.
@@ -70,9 +72,9 @@ A small API for a management tool on another machine, so the tool needs neither 
 
 | | Endpoint | Does |
 |---|---|---|
-| | `GET /v1/info` | OpenCloud's version, and whether Authelia is used |
-| Authelia | `GET /v1/authelia/users` | the entries: name, display name, e-mail, disabled, admin (no password hashes) |
-| | `PUT /v1/authelia/users/<name>` | creates the entry or changes it: `{"displayname", "email", "disabled", "password"}` (a new one needs a display name and a password) |
+| | `GET /v1/info` | OpenCloud's version, whether Authelia is used, and whether its configuration asks the `2fa` group for 2FA |
+| Authelia | `GET /v1/authelia/users` | the entries: name, display name, e-mail, disabled, admin, two_factor (no password hashes) |
+| | `PUT /v1/authelia/users/<name>` | creates the entry or changes it: `{"displayname", "email", "disabled", "password", "two_factor"}` (a new one needs a display name and a password). `two_factor` puts the user in the `2fa` group or takes them out (see Users); 409 if `authelia/configuration.yml` has no rule for it yet |
 | | `DELETE /v1/authelia/users/<name>` | removes the entry |
 | | `POST /v1/authelia/users/<name>/reset-2fa` | removes the user's 2FA devices, as `users.sh reset-2fa` |
 | OpenCloud | `GET`, `PUT /v1/opencloud/users/<name>/emails` | the user's "Disable Email Notifications": `{"disabled": true}` mutes all of OpenCloud's e-mails to them |
@@ -88,7 +90,7 @@ All under `https://<your domain>/manage-api/`, with the header `Authorization: B
 5. `docker compose up -d`.
 
 **What protects it:**
-- **It never acts on admins:** any change to a member of Authelia's `admins` group or to an OpenCloud Admin is refused (403), and nobody can be added to `admins`. Admins stay with `users.sh` on the server. So a leaked token reaches only the other accounts, which the management tool's admin app token can reach anyway.
+- **It never acts on admins:** any change to a member of Authelia's `admins` group or to an OpenCloud Admin is refused (403), and nobody can be added to `admins` or taken out of it. So it can't turn an admin's 2FA off either: admins get 2FA from `admins`, and `two_factor` only changes the separate `2fa` group. Admins stay with `users.sh` on the server. So a leaked token reaches only the other accounts, which the management tool's admin app token can reach anyway.
 - **The token:** 256 random bits, compared in constant time; after 10 wrong tokens from one address within 10 minutes, that address is refused for the rest of the 10 minutes.
 - **Per-user tokens never leave the server:** for the OpenCloud endpoints the API makes an app token for that one user with OpenCloud's own CLI, valid for a minute, does the one thing and revokes it.
 - **Authelia's user file** is changed exactly as `users.sh` does it (the same lock, the whole file checked, then renamed into place), so both can be used side by side. Password hashes and 2FA resets use Authelia's own code (its CLI is in the image, the same version as `AUTHELIA_IMAGE`).

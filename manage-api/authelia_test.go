@@ -34,6 +34,18 @@ const usersFixture = `users:
     groups: []
 `
 
+const configFixture = `identity_providers:
+  oidc:
+    authorization_policies:
+      opencloud:
+        default_policy: one_factor
+        rules:
+          - policy: two_factor
+            subject:
+              - group:admins
+              - group:2fa
+`
+
 func testAuthelia(t *testing.T) *authelia {
 	t.Helper()
 	dir := t.TempDir()
@@ -44,7 +56,12 @@ func testAuthelia(t *testing.T) *authelia {
 	if err := os.WriteFile(users, []byte(usersFixture), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	a := newAuthelia(users, filepath.Join(dir, ".users.lock"), "/nowhere")
+	// The part of deploy/'s configuration that matters here
+	config := filepath.Join(dir, "configuration.yml")
+	if err := os.WriteFile(config, []byte(configFixture), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	a := newAuthelia(users, filepath.Join(dir, ".users.lock"), config)
 	a.hash = func(_ context.Context, pw string) (string, error) { return "$argon2id$hash-of-" + pw, nil }
 	a.cli = func(context.Context, ...string) (string, error) { return "", errors.New("no CLI in this test") }
 	return a
@@ -294,5 +311,81 @@ func TestScalarQuoting(t *testing.T) {
 	}
 	if back["a"] != "123" || back["b"] != "yes" {
 		t.Errorf("%s -> %#v", out, back)
+	}
+}
+
+func TestTwoFactorGroup(t *testing.T) {
+	a := testAuthelia(t)
+	if _, err := a.put(context.Background(), "alice", userChange{TwoFactor: boolp(true)}); err != nil {
+		t.Fatal(err)
+	}
+	if g := readUsers(t, a)["alice"].Groups; len(g) != 1 || g[0] != "2fa" {
+		t.Errorf("groups %v", g)
+	}
+	list, _ := a.list()
+	for _, u := range list {
+		if u.TwoFactor != (u.Name == "alice") {
+			t.Errorf("list: %+v", u)
+		}
+	}
+	// Twice on is still once; off keeps the other groups
+	if _, err := a.put(context.Background(), "alice", userChange{TwoFactor: boolp(true)}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.put(context.Background(), "alice", userChange{TwoFactor: boolp(false)}); err != nil {
+		t.Fatal(err)
+	}
+	if g := readUsers(t, a)["alice"].Groups; len(g) != 0 {
+		t.Errorf("after off: %v", g)
+	}
+	// A new entry with 2FA from the start
+	if _, err := a.put(context.Background(), "erin", userChange{DisplayName: str("Erin"), Password: str("pw1"), TwoFactor: boolp(true)}); err != nil {
+		t.Fatal(err)
+	}
+	if !readUsers(t, a)["erin"].in("2fa") {
+		t.Error("erin isn't in 2fa")
+	}
+}
+
+func TestSetGroupKeepsOthers(t *testing.T) {
+	var entry yaml.Node
+	if err := yaml.Unmarshal([]byte("groups: [staff, 2fa, other]\n"), &entry); err != nil {
+		t.Fatal(err)
+	}
+	m := entry.Content[0]
+	setGroup(m, "2fa", false)
+	setGroup(m, "x", true)
+	var got []string
+	for _, n := range mapValue(m, "groups").Content {
+		got = append(got, n.Value)
+	}
+	if strings.Join(got, ",") != "staff,other,x" {
+		t.Errorf("groups %v", got)
+	}
+}
+
+func TestTwoFactorNeedsTheRule(t *testing.T) {
+	a := testAuthelia(t)
+	// A configuration from before the 2fa group
+	if err := os.WriteFile(a.config, []byte(strings.ReplaceAll(configFixture, "              - group:2fa\n", "")), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	before, _ := os.ReadFile(a.usersFile)
+	_, err := a.put(context.Background(), "alice", userChange{TwoFactor: boolp(true)})
+	var he *httpError
+	if !errors.As(err, &he) || he.status != 409 {
+		t.Fatalf("want 409, got %v", err)
+	}
+	if after, _ := os.ReadFile(a.usersFile); string(after) != string(before) {
+		t.Error("the file changed")
+	}
+	// Turning it off needs no rule
+	if _, err := a.put(context.Background(), "alice", userChange{TwoFactor: boolp(false)}); err != nil {
+		t.Error(err)
+	}
+	// A commented-out rule doesn't count
+	_ = os.WriteFile(a.config, []byte("# subject: group:2fa\n"), 0o600)
+	if ok, _ := a.twoFactorConfigured(); ok {
+		t.Error("a comment counted as the rule")
 	}
 }

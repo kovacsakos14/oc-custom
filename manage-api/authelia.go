@@ -27,6 +27,12 @@ const passwordMinLength = 3
 
 var nameRe = regexp.MustCompile(`^[A-Za-z0-9_.@-]+$`)
 
+// twoFactorGroup: Authelia asks its members for 2FA (as admins), when its
+// configuration has the rule (deploy/authelia/configuration.yml)
+const twoFactorGroup = "2fa"
+
+var twoFactorRule = regexp.MustCompile(`(?m)^[^#\n]*group:` + twoFactorGroup + `\b`)
+
 // validName checks a username as users.sh does.
 func validName(n string) error {
 	if !nameRe.MatchString(n) || len(n) > 255 {
@@ -99,6 +105,8 @@ type autheliaUser struct {
 	Email       string `json:"email"`
 	Disabled    bool   `json:"disabled"`
 	Admin       bool   `json:"admin"` // in the admins group: read-only here
+	// In the 2fa group: asked for 2FA (admins always are)
+	TwoFactor bool `json:"two_factor"`
 }
 
 type fileUser struct {
@@ -109,14 +117,16 @@ type fileUser struct {
 	Password    *string  `yaml:"password"`
 }
 
-func (u fileUser) admin() bool {
+func (u fileUser) in(group string) bool {
 	for _, g := range u.Groups {
-		if g == "admins" {
+		if g == group {
 			return true
 		}
 	}
 	return false
 }
+
+func (u fileUser) admin() bool { return u.in("admins") }
 
 func (a *authelia) read() (map[string]fileUser, error) {
 	b, err := os.ReadFile(a.usersFile)
@@ -139,7 +149,8 @@ func (a *authelia) list() ([]autheliaUser, error) {
 	}
 	out := make([]autheliaUser, 0, len(users))
 	for n, u := range users {
-		out = append(out, autheliaUser{Name: n, DisplayName: u.DisplayName, Email: u.Email, Disabled: u.Disabled, Admin: u.admin()})
+		out = append(out, autheliaUser{Name: n, DisplayName: u.DisplayName, Email: u.Email, Disabled: u.Disabled,
+			Admin: u.admin(), TwoFactor: u.in(twoFactorGroup)})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out, nil
@@ -163,6 +174,8 @@ type userChange struct {
 	Email       *string `json:"email"`
 	Disabled    *bool   `json:"disabled"`
 	Password    *string `json:"password"`
+	// In the 2fa group or not
+	TwoFactor *bool `json:"two_factor"`
 }
 
 func plainText(s string) bool {
@@ -185,7 +198,7 @@ func (c userChange) check() error {
 	if c.Password != nil && (len([]rune(*c.Password)) < passwordMinLength || len(*c.Password) > 1024 || strings.ContainsRune(*c.Password, 0)) {
 		return fmt.Errorf("password: at least %d characters", passwordMinLength)
 	}
-	if c.DisplayName == nil && c.Email == nil && c.Disabled == nil && c.Password == nil {
+	if c.DisplayName == nil && c.Email == nil && c.Disabled == nil && c.Password == nil && c.TwoFactor == nil {
 		return errors.New("nothing to change")
 	}
 	return nil
@@ -194,6 +207,16 @@ func (c userChange) check() error {
 // put creates user's entry or changes the given fields. It reports whether
 // the entry is new.
 func (a *authelia) put(ctx context.Context, user string, c userChange) (bool, error) {
+	if c.TwoFactor != nil && *c.TwoFactor {
+		ok, err := a.twoFactorConfigured()
+		if err != nil {
+			return false, err
+		}
+		if !ok {
+			// The group alone would change nothing: say so instead
+			return false, errStatus(http.StatusConflict, "Authelia's configuration doesn't ask the %s group for 2FA yet (update authelia/configuration.yml)", twoFactorGroup)
+		}
+	}
 	digest := ""
 	if c.Password != nil {
 		// Before the lock: it takes about a second
@@ -232,9 +255,22 @@ func (a *authelia) put(ctx context.Context, user string, c userChange) (bool, er
 		if c.Password != nil {
 			setStr(entry, "password", digest)
 		}
+		if c.TwoFactor != nil {
+			setGroup(entry, twoFactorGroup, *c.TwoFactor)
+		}
 		return nil
 	})
 	return created, err
+}
+
+// twoFactorConfigured reports whether Authelia's configuration names the
+// 2fa group (in its two_factor rule; deploy/ has nothing else that could).
+func (a *authelia) twoFactorConfigured() (bool, error) {
+	b, err := os.ReadFile(a.config)
+	if err != nil {
+		return false, fmt.Errorf("Authelia's configuration: %w", err)
+	}
+	return twoFactorRule.Match(b), nil
 }
 
 func (a *authelia) remove(user string) error {
@@ -419,6 +455,25 @@ func setStr(m *yaml.Node, key, v string) { setNode(m, key, scalar(v)) }
 
 func setBool(m *yaml.Node, key string, v bool) {
 	setNode(m, key, &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!bool", Value: fmt.Sprint(v)})
+}
+
+// setGroup adds entry to group or takes it out, keeping its other groups.
+func setGroup(entry *yaml.Node, group string, in bool) {
+	g := mapValue(entry, "groups")
+	if g == nil || g.Kind != yaml.SequenceNode {
+		g = &yaml.Node{Kind: yaml.SequenceNode, Style: yaml.FlowStyle}
+		setNode(entry, "groups", g)
+	}
+	kept := g.Content[:0]
+	for _, n := range g.Content {
+		if n.Value != group {
+			kept = append(kept, n)
+		}
+	}
+	g.Content = kept
+	if in {
+		g.Content = append(g.Content, scalar(group))
+	}
 }
 
 func inAdmins(entry *yaml.Node) bool {

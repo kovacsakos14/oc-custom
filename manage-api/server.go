@@ -241,6 +241,8 @@ func decode(r *http.Request, v any) error {
 type infoBody struct {
 	OpenCloud string `json:"opencloud"` // its version, from status.php
 	Authelia  bool   `json:"authelia"`
+	// Authelia asks the 2fa group for 2FA (two_factor can be turned on)
+	TwoFactorGroup bool `json:"two_factor_group"`
 }
 
 func (a *api) info(r *http.Request) (any, error) {
@@ -248,7 +250,13 @@ func (a *api) info(r *http.Request) (any, error) {
 	if err != nil {
 		return nil, errStatus(http.StatusBadGateway, "OpenCloud: %v", err)
 	}
-	return infoBody{OpenCloud: v, Authelia: a.authelia != nil}, nil
+	b := infoBody{OpenCloud: v, Authelia: a.authelia != nil}
+	if a.authelia != nil {
+		if b.TwoFactorGroup, err = a.authelia.twoFactorConfigured(); err != nil {
+			return nil, err
+		}
+	}
+	return b, nil
 }
 
 func (a *api) needAuthelia() error {

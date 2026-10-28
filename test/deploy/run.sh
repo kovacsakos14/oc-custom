@@ -211,7 +211,7 @@ step "the desktop app's sign-in (PKCE, loopback redirect, refresh)" desktop.js U
 step "admin: 2FA registered at the first sign-in, removed and registered again on the settings page" admin-2fa.js \
     ADMIN_PASSWORD="$ADMIN_PASSWORD" ADMIN_EMAIL=admin@deploy.test
 check "users.sh reset-2fa admin" './users.sh reset-2fa admin'
-step "admin is asked to register 2FA again" admin-reset.js ADMIN_PASSWORD="$ADMIN_PASSWORD"
+step "admin is asked to register 2FA again" twofa.js USER_NAME=admin USER_PASSWORD="$ADMIN_PASSWORD" WANT=register
 # Changing a User to a type without a personal space disables it, with the links from it
 check "alice (User) shares a folder in her personal space by a public link" \
     'A="alice:$(user_token alice)"
@@ -274,6 +274,19 @@ check "disabled through the API, Authelia refuses ivy; enabled, she's back" \
 check "a new password through the API: the new one works, the old one doesn't" \
     '[ "$(mcode PUT /v1/authelia/users/ivy "{\"password\":\"Ivy-pass2\"}")" = 200 ] && sleep 2 &&
      firstfactor ivy Ivy-pass2 && ! firstfactor ivy Ivy-pass1'
+check "users.sh 2fa ivy on (the 2fa group)" \
+    './users.sh 2fa ivy on < /dev/null && grep -A8 "^  ivy:" authelia/users/users_database.yml | grep -q -- "- 2fa"'
+step "ivy (a Client in the 2fa group) is asked to register a 2FA app" twofa.js USER_NAME=ivy USER_PASSWORD=Ivy-pass2 WANT=register
+check "2FA off for ivy through the API (two_factor false; the list shows it)" \
+    '[ "$(mcode PUT /v1/authelia/users/ivy "{\"two_factor\":false}")" = 200 ] &&
+     mbody GET /v1/authelia/users | grep -q "\"name\":\"ivy\",[^}]*\"two_factor\":false"'
+step "ivy signs in with the password only again" twofa.js USER_NAME=ivy USER_PASSWORD=Ivy-pass2 WANT=files
+check "2FA on for ivy through the API; info says the configuration has the 2fa rule" \
+    '[ "$(mcode PUT /v1/authelia/users/ivy "{\"two_factor\":true}")" = 200 ] &&
+     mbody GET /v1/authelia/users | grep -q "\"name\":\"ivy\",[^}]*\"two_factor\":true" &&
+     mbody GET /v1/info | grep -q "\"two_factor_group\":true"'
+step "ivy is asked to register a 2FA app again" twofa.js USER_NAME=ivy USER_PASSWORD=Ivy-pass2 WANT=register
+check "users.sh 2fa admin off is refused (admins always need 2FA)" '! ./users.sh 2fa admin off < /dev/null'
 check "Reset 2FA through the API (Authelia's CLI in the API's container)" \
     'mbody POST /v1/authelia/users/ivy/reset-2fa | grep -q "\"reset\":true"'
 check "ivy's OpenCloud e-mails muted and unmuted through the API, impersonation off" \
@@ -289,6 +302,7 @@ check "the API refuses every change to admin (403); admin's entry is unchanged" 
     'before="$(grep -A6 "^  admin:" authelia/users/users_database.yml)" &&
      [ "$(mcode PUT /v1/authelia/users/admin "{\"password\":\"Taken-over1\"}")" = 403 ] &&
      [ "$(mcode PUT /v1/authelia/users/admin "{\"disabled\":true}")" = 403 ] &&
+     [ "$(mcode PUT /v1/authelia/users/admin "{\"two_factor\":false}")" = 403 ] &&
      [ "$(mcode POST /v1/authelia/users/admin/reset-2fa)" = 403 ] &&
      [ "$(mcode DELETE /v1/authelia/users/admin)" = 403 ] &&
      [ "$(mcode PUT /v1/opencloud/users/admin/emails "{\"disabled\":true}")" = 403 ] &&

@@ -168,6 +168,21 @@ func TestTokenIsRequired(t *testing.T) {
 	}
 }
 
+func TestInfoTwoFactorGroup(t *testing.T) {
+	s := newTestServer(t, true)
+	if code, m := s.do(t, "GET", "/v1/info", testToken, ""); code != 200 || m["authelia"] != true || m["two_factor_group"] != true {
+		t.Errorf("info: %d %v", code, m)
+	}
+	code, m := s.do(t, "PUT", "/v1/authelia/users/balabit", testToken, `{"displayname":"B","password":"pw1","two_factor":true}`)
+	if code != 200 || m["created"] != true || !readUsers(t, s.authelia)["balabit"].in("2fa") {
+		t.Errorf("create with two_factor: %d %v", code, m)
+	}
+	// Admins have 2FA anyway, and stay untouched
+	if code, _ := s.do(t, "PUT", "/v1/authelia/users/admin", testToken, `{"two_factor":false}`); code != 403 {
+		t.Errorf("admin: %d", code)
+	}
+}
+
 func TestFailedAttemptsAreLimited(t *testing.T) {
 	s := newTestServer(t, false)
 	for range 10 {

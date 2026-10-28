@@ -32,6 +32,9 @@ Usage: ./users.sh COMMAND [USER] [OPTIONS]
   delete USER                   Deletes the user (their files too)
   reset-2fa USER                Removes the user's 2FA devices (lost phone);
                                 admins register a new one at the next sign-in
+  2fa USER on|off               With Authelia: whether a non-admin needs 2FA
+                                (the 2fa group); on: they register an app at
+                                the next sign-in. Admins always need it.
 
 A password is read from stdin when it isn't a terminal (one line).
 EOF
@@ -392,6 +395,27 @@ reset_2fa() { # prints what was removed
     out="$(authelia_cli storage user webauthn delete "$1" --all 2>&1)" || die "Authelia: $(head -1 <<< "$out")"
 }
 
+cmd_2fa() {
+    local user="${1-}" on="${2-}"
+    [ -n "$user" ] && { [ "$on" = on ] || [ "$on" = off ]; } || die "2fa USER on|off"
+    with_authelia || die "No Authelia on this server (COMPOSE_FILE in .env)"
+    valid_name "$user"
+    has_user "$user" || die "Authelia: no entry for $user (users.sh passwd $user adds one)"
+    export Y_USER="$user"
+    # Admins get 2FA from the admins group, not from this one
+    [ "$(users_yaml | yq '.users[strenv(Y_USER)].groups // [] | contains(["admins"])')" != true ] ||
+        die "$user is an admin: admins always need 2FA"
+    grep -Eq '^[^#]*group:2fa\b' authelia/configuration.yml ||
+        die "authelia/configuration.yml doesn't ask the 2fa group for 2FA yet: take the new one from oc-custom's deploy/"
+    if [ "$on" = on ]; then
+        edit_user "$user" '.groups = ((.groups // []) + ["2fa"] | unique)'
+        echo "Authelia: $user needs 2FA (registers an app at the next sign-in)"
+    else
+        edit_user "$user" '.groups = ((.groups // []) - ["2fa"])'
+        echo "Authelia: $user signs in with the password only"
+    fi
+}
+
 cmd_reset_2fa() {
     local user="${1-}"
     [ -n "$user" ] || die "reset-2fa USER"
@@ -413,6 +437,7 @@ case "$cmd" in
     enable) cmd_enable "${1-}" true ;;
     delete) cmd_delete "${1-}" ;;
     reset-2fa) cmd_reset_2fa "${1-}" ;;
+    2fa) cmd_2fa "$@" ;;
     help|-h|--help) usage ;;
     *) usage >&2; exit 1 ;;
 esac
