@@ -1,0 +1,92 @@
+diff --git a/packages/web-pkg/src/composables/piniaStores/theme.ts b/packages/web-pkg/src/composables/piniaStores/theme.ts
+index 33429c3..8247b30 100644
+--- a/packages/web-pkg/src/composables/piniaStores/theme.ts
++++ b/packages/web-pkg/src/composables/piniaStores/theme.ts
+@@ -39,7 +39,9 @@ const DesignTokens = z.object({
+ const WebDefaults = CommonSection.extend({
+   designTokens: DesignTokens.optional(),
+   favicon: z.string().optional(),
+-  background: z.string().optional()
++  background: z.string().optional(),
++  // oc-custom: the top bar's notification bell shows only when this is true
++  notificationBell: z.boolean().optional()
+ })
+ 
+ const WebTheme = WebDefaults.extend({
+diff --git a/packages/web-runtime/src/components/Topbar/TopBar.vue b/packages/web-runtime/src/components/Topbar/TopBar.vue
+index d5ea01b..4919b59 100644
+--- a/packages/web-runtime/src/components/Topbar/TopBar.vue
++++ b/packages/web-runtime/src/components/Topbar/TopBar.vue
+@@ -91,8 +91,15 @@ const appMenuExtensions = computed(() => {
+ 
+ const hideLogo = computed(() => unref(configOptions).hideLogo)
+ 
++// oc-custom: off unless the branding turns it on (theme.json's
++// clients.web.defaults.notificationBell); the notifications service still
++// sends its e-mails
+ const isNotificationBellEnabled = computed(() => {
+-  return authStore.userContextReady && capabilityStore.notificationsOcsEndpoints.includes('list')
++  return (
++    authStore.userContextReady &&
++    capabilityStore.notificationsOcsEndpoints.includes('list') &&
++    unref(currentTheme)?.notificationBell === true
++  )
+ })
+ 
+ const homeLink = computed(() => {
+diff --git a/packages/web-runtime/tests/unit/components/Topbar/TopBar.spec.ts b/packages/web-runtime/tests/unit/components/Topbar/TopBar.spec.ts
+index 6e65231..1651e2c 100644
+--- a/packages/web-runtime/tests/unit/components/Topbar/TopBar.spec.ts
++++ b/packages/web-runtime/tests/unit/components/Topbar/TopBar.spec.ts
+@@ -2,7 +2,8 @@ import { Capabilities } from '@opencloud-eu/web-client/ocs'
+ import {
+   ApplicationInformation,
+   AppMenuItemExtension,
+-  useExtensionRegistry
++  useExtensionRegistry,
++  WebThemeType
+ } from '@opencloud-eu/web-pkg'
+ import { mock } from 'vitest-mock-extended'
+ import { computed } from 'vue'
+@@ -30,6 +31,17 @@ describe('Top Bar component', () => {
+       })
+       expect(wrapper.find('notifications-stub').exists()).toBeTruthy()
+     })
++    it('should not display unless the branding turns it on (oc-custom)', () => {
++      for (const theme of [{}, { notificationBell: false }]) {
++        const { wrapper } = getWrapper({
++          theme,
++          capabilities: {
++            notifications: { 'ocs-endpoints': ['list', 'get', 'delete'] }
++          }
++        })
++        expect(wrapper.find('notifications-stub').exists()).toBeFalsy()
++      }
++    })
+     it('should not display in an unauthenticated context', () => {
+       const { wrapper } = getWrapper({
+         userContextReady: false,
+@@ -76,10 +88,12 @@ describe('Top Bar component', () => {
+ 
+ const getWrapper = ({
+   capabilities = {},
+-  userContextReady = true
++  userContextReady = true,
++  theme = { notificationBell: true }
+ }: {
+   capabilities?: Partial<Capabilities['capabilities']>
+   userContextReady?: boolean
++  theme?: Partial<WebThemeType>
+ } = {}) => {
+   const mocks = { ...defaultComponentMocks() }
+ 
+@@ -87,7 +101,8 @@ const getWrapper = ({
+     piniaOptions: {
+       authState: { userContextReady },
+       capabilityState: { capabilities },
+-      configState: { options: { disableFeedbackLink: false } }
++      configState: { options: { disableFeedbackLink: false } },
++      themeState: { currentTheme: mock<WebThemeType>(theme) }
+     }
+   })
+ 
