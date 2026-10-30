@@ -91,6 +91,7 @@ stack() {
         -e "s/^OC_ADMIN_PASSWORD=.*/OC_ADMIN_PASSWORD=$ADMIN_PASSWORD/" \
         -e "s/^ADMIN_EMAIL=.*/ADMIN_EMAIL=admin@deploy.test/" -e "s|^OC_IMAGE=.*|OC_IMAGE=$IMAGE|" \
         -e "s|^COMPOSE_FILE=.*|COMPOSE_FILE=$files|" -e "s/^SWAG_NETWORK=.*/SWAG_NETWORK=$NET/" \
+        -e "s/^#SWAG_CONTAINER=.*/SWAG_CONTAINER=dtest-swag/" \
         -e "s/^SMTP_HOST=.*/SMTP_HOST=dtest-mailpit/" -e "s/^SMTP_PORT=.*/SMTP_PORT=1025/" \
         -e "s/^SMTP_ENCRYPTION=.*/SMTP_ENCRYPTION=none/" -e "s/^SMTP_AUTHENTICATION=.*/SMTP_AUTHENTICATION=none/" \
         "$dir/.env.example" > "$dir/.env"

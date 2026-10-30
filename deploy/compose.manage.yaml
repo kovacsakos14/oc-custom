@@ -26,6 +26,8 @@ services:
     security_opt: ["no-new-privileges:true"]
     environment:
       MANAGE_API_BRANDING_DIR: /branding
+      # Only SWAG's X-Real-IP names the client (the limit on failed tokens)
+      MANAGE_API_TRUSTED_PROXIES: ${SWAG_CONTAINER:-swag}
     volumes:
       # OpenCloud's config, for its CLI
       - ./config:/etc/opencloud:ro
