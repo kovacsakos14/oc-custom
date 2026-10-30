@@ -81,7 +81,7 @@ Everything else is upstream's: the image is the official one with only `/usr/bin
 ```yaml
 services:
   opencloud:
-    image: ghcr.io/kovacsakos14/oc-custom:7.2.4-11   # was: opencloudeu/opencloud:7.2.4
+    image: ghcr.io/kovacsakos14/oc-custom:7.2.4-13   # was: opencloudeu/opencloud:7.2.4
     volumes:
       - ./config:/etc/opencloud
       - ./data:/var/lib/opencloud
@@ -92,6 +92,7 @@ services:
 - **Update or roll back** by changing the tag, then `docker compose pull && docker compose up -d`.
 - **Tags never change** once published: `7.2.4-1`, `7.2.4-2`, … each mean one build. There's no `latest`, so a server only changes when you change its tag. For extra certainty, pin the digest as well (`…:7.2.4-1@sha256:…`).
 - **The image is public,** so servers pull it without logging in. It holds nothing secret: config and branding stay on each server.
+- **From 7.2.4-12 to 7.2.4-13:** change the tag. A "Can't delete" upload that was started over an empty file (or with the same content) is refused when it finishes if the file changed meanwhile (412). With [`deploy/`](deploy/README.md), take its new files: `users.sh` now makes Authelia's password hashes with this image (`OC_IMAGE` must be 7.2.4-13 or later), so the password is never on a command line; the management API's `compose.manage.yaml` believes the client address only from SWAG (`SWAG_CONTAINER` in `.env` when SWAG's container isn't called `swag`).
 - **From 7.2.4-11 to 7.2.4-12:** change the tag. The notification bell is gone from the top bar; to keep it, add `"notificationBell": true` to `clients.web.defaults` in the branding's `theme.json` (patch 22). OpenCloud's e-mails don't change.
 - **From 7.2.4-10 to 7.2.4-11:** change the tag; the image is the same as 7.2.4-9's. With [`deploy/`](deploy/README.md), take its new compose files and run `./setup.sh` (it makes `authelia/assets/` and `manage-api/state/`), then `docker compose up -d`. Authelia now serves its sign-in page's logo and tab icon from `authelia/assets/` (empty: its own), and the management API can write the branding folder and that one ([Branding through the API](deploy/README.md#the-management-api-optional-from-724-9)). The API's records move from a Docker volume to `manage-api/state/`: update when no new user was made in the last few minutes, or e-mails it muted for that user stay off.
 - **From 7.2.4-9 to 7.2.4-10:** change the tag; the image is the same as 7.2.4-9's. With [`deploy/`](deploy/README.md), take its new files and run `./setup.sh`: it rewrites the SWAG site, which now adds a ["Back to your files"](deploy/README.md#notes-and-troubleshooting) button to Authelia's settings pages (where users are left after registering 2FA or changing their password); copy it to SWAG again and restart SWAG. `MANAGE_API_IMAGE` (optional) runs the management API from another image.
