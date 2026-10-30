@@ -200,10 +200,14 @@ func TestWaitsForUsersShLock(t *testing.T) {
 	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX); err != nil {
 		t.Fatal(err)
 	}
+	fd := int(f.Fd()) // read here: f.Fd() in the goroutine raced with the deferred Close
+	unlocked := make(chan struct{})
 	go func() {
+		defer close(unlocked)
 		time.Sleep(300 * time.Millisecond)
-		_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+		_ = syscall.Flock(fd, syscall.LOCK_UN)
 	}()
+	defer func() { <-unlocked }()
 	start := time.Now()
 	if _, err := a.put(context.Background(), "dave", userChange{DisplayName: str("Dave"), Password: str("pw1")}); err != nil {
 		t.Fatal(err)

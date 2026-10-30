@@ -39,6 +39,9 @@ type config struct {
 	AutheliaUsers  string
 	AutheliaLock   string // users.sh's lock file
 	AutheliaConfig string // for Authelia's CLI (2FA devices)
+	// The reverse proxies whose X-Real-IP names the client (SWAG); from
+	// anyone else the header is ignored
+	Proxies *trustedProxies
 	// Exit when OpenCloud hasn't answered for this long (0: never): after
 	// OpenCloud's container restarts, this one is in a namespace without it,
 	// and its restart policy brings it back into the new one
@@ -64,6 +67,9 @@ func loadConfig() (config, error) {
 	var err error
 	if c.OpenCloudInsecure, err = strconv.ParseBool(env("MANAGE_API_OPENCLOUD_INSECURE", "false")); err != nil {
 		return c, fmt.Errorf("MANAGE_API_OPENCLOUD_INSECURE: %w", err)
+	}
+	if c.Proxies, err = parseTrustedProxies(env("MANAGE_API_TRUSTED_PROXIES", "")); err != nil {
+		return c, fmt.Errorf("MANAGE_API_TRUSTED_PROXIES: %w", err)
 	}
 	if c.Watchdog, err = time.ParseDuration(env("MANAGE_API_WATCHDOG", "90s")); err != nil {
 		return c, fmt.Errorf("MANAGE_API_WATCHDOG: %w", err)

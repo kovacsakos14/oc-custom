@@ -10,7 +10,6 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -27,6 +26,7 @@ type api struct {
 	authelia      *authelia
 	log           *slog.Logger
 	failures      *limiter
+	proxies       *trustedProxies // whose X-Real-IP names the client
 }
 
 func serve(c config, log *slog.Logger) error {
@@ -35,9 +35,13 @@ func serve(c config, log *slog.Logger) error {
 		oc:            newOpenCloud(c.OpenCloudURL, c.OpenCloudInsecure),
 		log:           log,
 		failures:      newLimiter(10, 10*time.Minute),
+		proxies:       c.Proxies,
 	}
 	if c.AutheliaUsers != "" {
 		a.authelia = newAuthelia(c.AutheliaUsers, c.AutheliaLock, c.AutheliaConfig)
+	}
+	if len(a.proxies.names) > 0 && len(a.proxies.namesResolved()) == 0 {
+		log.Warn("no trusted proxy resolves; X-Real-IP is ignored from everyone (MANAGE_API_TRUSTED_PROXIES)", "names", a.proxies.names)
 	}
 	if _, err := a.tokenHash(); err != nil {
 		// Not fatal: setup.sh may write it after the start; until then
@@ -126,19 +130,6 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 	_ = json.NewEncoder(w).Encode(v)
 }
 
-// client names who asked, for the rate limit and the log: SWAG's
-// X-Real-IP, otherwise the connection's address
-func client(r *http.Request) string {
-	if ip := r.Header.Get("X-Real-IP"); ip != "" && net.ParseIP(ip) != nil {
-		return ip
-	}
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		return r.RemoteAddr
-	}
-	return host
-}
-
 // tokenHash reads the stored SHA-256 at each request, so a new token
 // (setup.sh --new-manage-token) works without a restart.
 func (a *api) tokenHash() ([]byte, error) {
@@ -171,7 +162,7 @@ func (a *api) checkToken(r *http.Request) error {
 // change (not reads) without bodies: no passwords in the log.
 func (a *api) authorized(h func(*http.Request) (any, error)) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		who := client(r)
+		who := a.client(r)
 		if a.failures.blocked(who) {
 			writeJSON(w, http.StatusTooManyRequests, errorBody{"too many failed attempts; try again later"})
 			return

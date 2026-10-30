@@ -4,11 +4,13 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"strings"
@@ -344,5 +346,46 @@ func TestWithoutAuthelia(t *testing.T) {
 	}
 	if code, _ := s.do(t, "GET", "/v1/nothing", testToken, ""); code != 404 {
 		t.Errorf("unknown path: %d", code)
+	}
+}
+
+func TestClientAddress(t *testing.T) {
+	proxies, err := parseTrustedProxies("10.1.0.0/16, 192.0.2.5, swag")
+	if err != nil {
+		t.Fatal(err)
+	}
+	proxies.lookup = func(_ context.Context, host string) ([]netip.Addr, error) {
+		if host == "swag" {
+			return []netip.Addr{netip.MustParseAddr("172.18.0.9")}, nil
+		}
+		return nil, errors.New("no such host")
+	}
+	a := &api{proxies: proxies}
+	for _, c := range []struct{ remote, realIP, want string }{
+		{"172.18.0.9:5000", "203.0.113.7", "203.0.113.7"},  // SWAG, by name
+		{"10.1.2.3:5000", "203.0.113.7", "203.0.113.7"},    // a trusted range
+		{"192.0.2.5:5000", "203.0.113.7", "203.0.113.7"},   // a trusted address
+		{"172.18.0.10:5000", "203.0.113.7", "172.18.0.10"}, // another container: the header is ignored
+		{"172.18.0.9:5000", "", "172.18.0.9"},              // SWAG without the header
+		{"172.18.0.9:5000", "not an ip", "172.18.0.9"},
+		{"[::ffff:172.18.0.9]:5000", "203.0.113.7", "203.0.113.7"},
+	} {
+		r := httptest.NewRequest("GET", "/v1/info", nil)
+		r.RemoteAddr = c.remote
+		if c.realIP != "" {
+			r.Header.Set("X-Real-IP", c.realIP)
+		}
+		if got := a.client(r); got != c.want {
+			t.Errorf("%s with X-Real-IP %q: %s, want %s", c.remote, c.realIP, got, c.want)
+		}
+	}
+	if got := (&api{}).client(&http.Request{RemoteAddr: "198.51.100.1:1", Header: http.Header{"X-Real-Ip": {"203.0.113.7"}}}); got != "198.51.100.1" {
+		t.Errorf("no trusted proxies: %s", got)
+	}
+	if _, err := parseTrustedProxies("10.0.0.0/33"); err == nil {
+		t.Error("a bad range was accepted")
+	}
+	if _, err := parseTrustedProxies("bad host!"); err == nil {
+		t.Error("a bad name was accepted")
 	}
 }
