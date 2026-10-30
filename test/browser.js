@@ -74,6 +74,17 @@ async function main() {
         visibilityFilter: !!(await page.$('.share-visibility-filter')),
       }
       await page.screenshot({ path: `/out/${user.name}-shared-with-me.png` })
+      // The first share's context menu there (sync, hide…)
+      if (r.sharedWithMe.items.length) {
+        await page.locator('tr:has([data-test-resource-name])').click({ button: 'right' })
+        await page.waitForSelector('#oc-files-context-menu', { timeout: 10000 })
+        r.sharedWithMe.shareActions = await page.$$eval(
+          '#oc-files-context-menu [class*="oc-files-actions-"][class*="-trigger"]',
+          (els) => els.map((e) => [...e.classList].find((c) => c.endsWith('-trigger')).replace(/^oc-files-actions-|-trigger$/g, ''))
+        )
+        await page.keyboard.press('Escape')
+        await new Promise((res) => setTimeout(res, 500))
+      }
       const hasPersonal = r.nav.includes('/files/spaces/personal')
       if (process.env.NEW && hasPersonal) {
         await page.locator('#web-nav-sidebar a[href*="/files/spaces/personal"]').click()

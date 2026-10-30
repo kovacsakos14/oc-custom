@@ -1,0 +1,192 @@
+diff --git a/internal/grpc/services/usershareprovider/usershareprovider.go b/internal/grpc/services/usershareprovider/usershareprovider.go
+index c2f3f9d..2c3bc30 100644
+--- a/internal/grpc/services/usershareprovider/usershareprovider.go
++++ b/internal/grpc/services/usershareprovider/usershareprovider.go
+@@ -658,6 +658,11 @@ func (s *service) UpdateReceivedShare(ctx context.Context, req *collaboration.Up
+ 		}, nil
+ 	}
+ 
++	// oc-custom: see refuseDecline (usershareprovider_custom.go)
++	if st := s.refuseDecline(ctx, req); st != nil {
++		return &collaboration.UpdateReceivedShareResponse{Status: st}, nil
++	}
++
+ 	isStateTransitionShareAccepted := slices.Contains(req.GetUpdateMask().GetPaths(), _fieldMaskPathState) && req.GetShare().GetState() == collaboration.ShareState_SHARE_STATE_ACCEPTED
+ 	isMountPointSet := slices.Contains(req.GetUpdateMask().GetPaths(), _fieldMaskPathMountPoint) && req.GetShare().GetMountPoint().GetPath() != ""
+ 	// we calculate a valid mountpoint only if the share should be accepted and the mount point is not set explicitly
+diff --git a/internal/grpc/services/usershareprovider/usershareprovider_custom.go b/internal/grpc/services/usershareprovider/usershareprovider_custom.go
+new file mode 100644
+index 0000000..d754b12
+--- /dev/null
++++ b/internal/grpc/services/usershareprovider/usershareprovider_custom.go
+@@ -0,0 +1,47 @@
++package usershareprovider
++
++// oc-custom: users without the auto-accept setting (oc-custom's Client and
++// Employee types) keep the shares they receive. Every way of declining one ends
++// in UpdateReceivedShare: the phone apps' decline (OCS pending), the web's
++// "Disable sync" (Graph), hiding, and deleting the share's folder in the Shares
++// space (the desktop app). A declined share leaves the Shares space, so the
++// desktop app would remove its synced folder.
++
++import (
++	"context"
++	"slices"
++
++	rpc "github.com/cs3org/go-cs3apis/cs3/rpc/v1beta1"
++	collaboration "github.com/cs3org/go-cs3apis/cs3/sharing/collaboration/v1beta1"
++
++	"github.com/opencloud-eu/reva/v2/pkg/rgrpc/status"
++	"github.com/opencloud-eu/reva/v2/pkg/utils"
++)
++
++// _permissionAutoAcceptShares is the settings permission every upstream user role
++// has and our Client and Employee types don't.
++const _permissionAutoAcceptShares = "AutoAcceptShares.ReadWriteDisabled"
++
++// _fieldMaskPathHidden is the received share's hidden flag (jsoncs3's "hidden").
++const _fieldMaskPathHidden = "hidden"
++
++// refuseDecline returns a status when the request declines or hides the share and
++// the user lacks _permissionAutoAcceptShares, nil otherwise. Accepting, unhiding
++// and moving the share's mount point stay allowed. If the permission can't be
++// checked, the request is refused: these users never need to decline.
++func (s *service) refuseDecline(ctx context.Context, req *collaboration.UpdateReceivedShareRequest) *rpc.Status {
++	paths := req.GetUpdateMask().GetPaths()
++	declines := slices.Contains(paths, _fieldMaskPathState) && req.GetShare().GetState() == collaboration.ShareState_SHARE_STATE_REJECTED
++	hides := slices.Contains(paths, _fieldMaskPathHidden) && req.GetShare().GetHidden()
++	if !declines && !hides {
++		return nil
++	}
++	gatewayClient, err := s.gatewaySelector.Next()
++	if err != nil {
++		return status.NewInternal(ctx, "error checking the permission to decline shares")
++	}
++	if ok, err := utils.CheckPermission(ctx, _permissionAutoAcceptShares, gatewayClient); err != nil || !ok {
++		return status.NewPermissionDenied(ctx, err, "this account can't decline or hide shares")
++	}
++	return nil
++}
+diff --git a/internal/grpc/services/usershareprovider/usershareprovider_custom_test.go b/internal/grpc/services/usershareprovider/usershareprovider_custom_test.go
+new file mode 100644
+index 0000000..8225aad
+--- /dev/null
++++ b/internal/grpc/services/usershareprovider/usershareprovider_custom_test.go
+@@ -0,0 +1,117 @@
++package usershareprovider_test
++
++// oc-custom: tests for refuseDecline (usershareprovider_custom.go), in their own
++// file so the patch doesn't conflict with upstream changes to
++// usershareprovider_test.go.
++
++import (
++	"context"
++	"errors"
++	"regexp"
++
++	gateway "github.com/cs3org/go-cs3apis/cs3/gateway/v1beta1"
++	userpb "github.com/cs3org/go-cs3apis/cs3/identity/user/v1beta1"
++	permissions "github.com/cs3org/go-cs3apis/cs3/permissions/v1beta1"
++	rpcpb "github.com/cs3org/go-cs3apis/cs3/rpc/v1beta1"
++	collaborationpb "github.com/cs3org/go-cs3apis/cs3/sharing/collaboration/v1beta1"
++	providerpb "github.com/cs3org/go-cs3apis/cs3/storage/provider/v1beta1"
++	. "github.com/onsi/ginkgo/v2"
++	. "github.com/onsi/gomega"
++	"github.com/stretchr/testify/mock"
++	"google.golang.org/grpc"
++	"google.golang.org/protobuf/types/known/fieldmaskpb"
++
++	"github.com/opencloud-eu/reva/v2/internal/grpc/services/usershareprovider"
++	ctxpkg "github.com/opencloud-eu/reva/v2/pkg/ctx"
++	"github.com/opencloud-eu/reva/v2/pkg/rgrpc/status"
++	"github.com/opencloud-eu/reva/v2/pkg/rgrpc/todo/pool"
++	"github.com/opencloud-eu/reva/v2/pkg/share/mocks"
++	cs3mocks "github.com/opencloud-eu/reva/v2/tests/cs3mocks/mocks"
++)
++
++var _ = Describe("Declining received shares (oc-custom)", func() {
++	var (
++		provider      collaborationpb.CollaborationAPIServer
++		manager       *mocks.Manager
++		gatewayClient *cs3mocks.GatewayAPIClient
++		checkErr      error
++
++		// user has upstream's User role, client our Client type
++		user   = &userpb.User{Id: &userpb.UserId{OpaqueId: "user"}, Username: "user"}
++		client = &userpb.User{Id: &userpb.UserId{OpaqueId: "client"}, Username: "client"}
++	)
++
++	update := func(u *userpb.User, share *collaborationpb.ReceivedShare, paths ...string) rpcpb.Code {
++		share.Share = &collaborationpb.Share{Id: &collaborationpb.ShareId{OpaqueId: "shareid"}}
++		res, err := provider.UpdateReceivedShare(ctxpkg.ContextSetUser(context.Background(), u), &collaborationpb.UpdateReceivedShareRequest{
++			Share:      share,
++			UpdateMask: &fieldmaskpb.FieldMask{Paths: paths},
++		})
++		Expect(err).ToNot(HaveOccurred())
++		return res.GetStatus().GetCode()
++	}
++	rejected := func() *collaborationpb.ReceivedShare {
++		return &collaborationpb.ReceivedShare{State: collaborationpb.ShareState_SHARE_STATE_REJECTED}
++	}
++	// accepted names its mount point, so accepting needs no lookups
++	accepted := func() *collaborationpb.ReceivedShare {
++		return &collaborationpb.ReceivedShare{
++			State:      collaborationpb.ShareState_SHARE_STATE_ACCEPTED,
++			MountPoint: &providerpb.Reference{Path: "Folder"},
++		}
++	}
++
++	BeforeEach(func() {
++		checkErr = nil
++		manager = &mocks.Manager{}
++		manager.On("UpdateReceivedShare", mock.Anything, mock.Anything, mock.Anything, mock.Anything).
++			Return(&collaborationpb.ReceivedShare{}, nil)
++
++		gatewayClient = &cs3mocks.GatewayAPIClient{}
++		pool.RemoveSelector("GatewaySelector" + "any")
++		gatewaySelector := pool.GetSelector[gateway.GatewayAPIClient](
++			"GatewaySelector",
++			"any",
++			func(cc grpc.ClientConnInterface) gateway.GatewayAPIClient {
++				return gatewayClient
++			},
++		)
++		gatewayClient.On("CheckPermission", mock.Anything, mock.Anything).Return(
++			func(ctx context.Context, in *permissions.CheckPermissionRequest, opts ...grpc.CallOption) *permissions.CheckPermissionResponse {
++				if in.GetSubjectRef().GetUserId().GetOpaqueId() == "user" && in.GetPermission() == "AutoAcceptShares.ReadWriteDisabled" {
++					return &permissions.CheckPermissionResponse{Status: status.NewOK(ctx)}
++				}
++				return &permissions.CheckPermissionResponse{Status: &rpcpb.Status{Code: rpcpb.Code_CODE_PERMISSION_DENIED}}
++			},
++			func(context.Context, *permissions.CheckPermissionRequest, ...grpc.CallOption) error { return checkErr },
++		)
++
++		provider = usershareprovider.New(gatewaySelector, manager, []*regexp.Regexp{}).(collaborationpb.CollaborationAPIServer)
++	})
++
++	It("refuses a Client's decline and hiding, and stores nothing", func() {
++		Expect(update(client, rejected(), "state")).To(Equal(rpcpb.Code_CODE_PERMISSION_DENIED))
++		Expect(update(client, rejected(), "state", "mount_point")).To(Equal(rpcpb.Code_CODE_PERMISSION_DENIED))
++		Expect(update(client, &collaborationpb.ReceivedShare{Hidden: true}, "hidden")).To(Equal(rpcpb.Code_CODE_PERMISSION_DENIED))
++		manager.AssertNotCalled(GinkgoT(), "UpdateReceivedShare", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
++	})
++
++	It("lets a Client accept, unhide and move the mount point", func() {
++		Expect(update(client, accepted(), "state", "mount_point")).To(Equal(rpcpb.Code_CODE_OK))
++		Expect(update(client, &collaborationpb.ReceivedShare{Hidden: false}, "hidden")).To(Equal(rpcpb.Code_CODE_OK))
++		Expect(update(client, &collaborationpb.ReceivedShare{MountPoint: &providerpb.Reference{Path: "Other"}}, "mount_point")).To(Equal(rpcpb.Code_CODE_OK))
++		// a rejected state outside the mask changes nothing
++		Expect(update(client, rejected(), "mount_point")).To(Equal(rpcpb.Code_CODE_OK))
++		gatewayClient.AssertNotCalled(GinkgoT(), "CheckPermission", mock.Anything, mock.Anything)
++	})
++
++	It("lets upstream's roles decline and hide", func() {
++		Expect(update(user, rejected(), "state")).To(Equal(rpcpb.Code_CODE_OK))
++		Expect(update(user, &collaborationpb.ReceivedShare{Hidden: true}, "hidden")).To(Equal(rpcpb.Code_CODE_OK))
++	})
++
++	It("refuses when the permission can't be checked", func() {
++		checkErr = errors.New("settings unreachable")
++		Expect(update(user, rejected(), "state")).To(Equal(rpcpb.Code_CODE_PERMISSION_DENIED))
++	})
++})

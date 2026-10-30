@@ -16,10 +16,10 @@ index 0000000..57e8fe6
 +export * from './useOcCustomFeatures'
 diff --git a/packages/web-pkg/src/composables/ocCustom/useOcCustomFeatures.ts b/packages/web-pkg/src/composables/ocCustom/useOcCustomFeatures.ts
 new file mode 100644
-index 0000000..4f2ddf1
+index 0000000..d202f1b
 --- /dev/null
 +++ b/packages/web-pkg/src/composables/ocCustom/useOcCustomFeatures.ts
-@@ -0,0 +1,54 @@
+@@ -0,0 +1,57 @@
 +import { unref } from 'vue'
 +import { User } from '@opencloud-eu/web-client/graph/generated'
 +import { useUserStore } from '../piniaStores'
@@ -46,6 +46,9 @@ index 0000000..4f2ddf1
 +  hideSpaces: [client, employee],
 +  /** shares can't be hidden, and "Shared with me" lists them all */
 +  noHideShares: [client, employee],
++  /** no "Disable sync" on a received share (the server refuses it too); "Enable sync" stays,
++   * to get back a share declined in a phone app before the server refused it */
++  noDisableSync: [client, employee],
 +  /** no "Copy permanent link" */
 +  noPermanentLink: [client, employee],
 +  /** the Text Editor isn't in the app menu or the "New" menu (text files still open in it) */
