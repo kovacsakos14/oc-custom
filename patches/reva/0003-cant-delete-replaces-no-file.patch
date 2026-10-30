@@ -1,8 +1,8 @@
 diff --git a/pkg/storage/pkg/decomposedfs/upload.go b/pkg/storage/pkg/decomposedfs/upload.go
-index 2462eaa..39f8b32 100644
+index 2462eaa..3fa1bb6 100644
 --- a/pkg/storage/pkg/decomposedfs/upload.go
 +++ b/pkg/storage/pkg/decomposedfs/upload.go
-@@ -288,6 +288,11 @@ func (fs *Decomposedfs) InitiateUpload(ctx context.Context, ref *provider.Refere
+@@ -288,6 +288,16 @@ func (fs *Decomposedfs) InitiateUpload(ctx context.Context, ref *provider.Refere
  		return nil, errtypes.PermissionDenied(path)
  	}
  
@@ -10,16 +10,21 @@ index 2462eaa..39f8b32 100644
 +	if n.Exists && !mayReplace(ctx, rp, n, metadata["checksum"]) {
 +		return nil, errtypes.PermissionDenied(path)
 +	}
++	if n.Exists && isCantDelete(rp) {
++		if err := pinToCurrent(ctx, session, n); err != nil {
++			return nil, err
++		}
++	}
 +
  	// are we trying to overwriting a folder with a file?
  	if n.Exists && n.IsDir(ctx) {
  		return nil, errtypes.PreconditionFailed("resource is not a file")
 diff --git a/pkg/storage/pkg/decomposedfs/upload_custom.go b/pkg/storage/pkg/decomposedfs/upload_custom.go
 new file mode 100644
-index 0000000..8880e41
+index 0000000..0383570
 --- /dev/null
 +++ b/pkg/storage/pkg/decomposedfs/upload_custom.go
-@@ -0,0 +1,49 @@
+@@ -0,0 +1,68 @@
 +package decomposedfs
 +
 +// oc-custom: oc-custom's "Can't delete" share role may upload new files but not
@@ -69,12 +74,31 @@ index 0000000..8880e41
 +	stored, err := n.Xattr(ctx, prefixes.ChecksumPrefix+algorithm)
 +	return err == nil && len(stored) > 0 && hex.EncodeToString(stored) == sum
 +}
++
++// pinToCurrent makes the upload replace only the file as it is now: reva checks
++// the session's If-Match against the file's etag when the upload finishes
++// (updateExistingNode), and InitiateUpload's check alone would let an upload
++// started over an empty file replace content written there in between (sessions
++// live a day). Always set, also over a client's own If-Match: the storage provider
++// has already checked that one against the current etag.
++func pinToCurrent(ctx context.Context, session interface{ SetMetadata(key, value string) }, n *node.Node) error {
++	mtime, err := n.GetMTime(ctx)
++	if err != nil {
++		return err
++	}
++	etag, err := node.CalculateEtag(n.ID, mtime)
++	if err != nil {
++		return err
++	}
++	session.SetMetadata("if-match", etag)
++	return nil
++}
 diff --git a/pkg/storage/pkg/decomposedfs/upload_custom_test.go b/pkg/storage/pkg/decomposedfs/upload_custom_test.go
 new file mode 100644
-index 0000000..fc5612b
+index 0000000..4d78474
 --- /dev/null
 +++ b/pkg/storage/pkg/decomposedfs/upload_custom_test.go
-@@ -0,0 +1,102 @@
+@@ -0,0 +1,157 @@
 +package decomposedfs_test
 +
 +// oc-custom: tests for the oc-custom change in InitiateUpload (upload_custom.go),
@@ -82,16 +106,19 @@ index 0000000..fc5612b
 +// upload_test.go.
 +
 +import (
++	"bytes"
 +	"crypto/md5"
 +	"crypto/sha1"
 +	"encoding/hex"
 +	"hash/adler32"
++	"io"
 +
 +	provider "github.com/cs3org/go-cs3apis/cs3/storage/provider/v1beta1"
 +	. "github.com/onsi/ginkgo/v2"
 +	. "github.com/onsi/gomega"
 +	"github.com/opencloud-eu/reva/v2/pkg/conversions"
 +	"github.com/opencloud-eu/reva/v2/pkg/errtypes"
++	"github.com/opencloud-eu/reva/v2/pkg/storage"
 +	"github.com/opencloud-eu/reva/v2/pkg/storage/pkg/decomposedfs/metadata/prefixes"
 +	helpers "github.com/opencloud-eu/reva/v2/pkg/storage/pkg/decomposedfs/testhelpers"
 +	"github.com/stretchr/testify/mock"
@@ -111,13 +138,16 @@ index 0000000..fc5612b
 +	ref := func(name string) *provider.Reference {
 +		return &provider.Reference{ResourceId: env.SpaceRootRes, Path: "./dir1/" + name}
 +	}
-+	// uploadWith starts an upload of 10 bytes to name with the given permissions and
++	// initiate starts an upload of 10 bytes to name with the given permissions and
 +	// upload metadata
-+	uploadWith := func(perms *provider.ResourcePermissions, name string, metadata map[string]string) error {
++	initiate := func(perms *provider.ResourcePermissions, name string, metadata map[string]string) (map[string]string, error) {
 +		// replaces the test env's own answer (its owner's permissions)
 +		env.Permissions.ExpectedCalls = nil
 +		env.Permissions.On("AssemblePermissions", mock.Anything, mock.Anything).Return(perms, nil)
-+		_, err := env.Fs.InitiateUpload(env.Ctx, ref(name), 10, metadata)
++		return env.Fs.InitiateUpload(env.Ctx, ref(name), 10, metadata)
++	}
++	uploadWith := func(perms *provider.ResourcePermissions, name string, metadata map[string]string) error {
++		_, err := initiate(perms, name, metadata)
 +		return err
 +	}
 +	upload := func(perms *provider.ResourcePermissions, name string) error {
@@ -176,12 +206,61 @@ index 0000000..fc5612b
 +		Expect(upload(canUpload(), "full.txt")).To(Succeed())
 +		Expect(upload(canEdit(), "full.txt")).To(Succeed())
 +	})
++
++	// finishAfter starts an upload of content to name as perms (with the upload
++	// metadata), runs between (the owner, while the upload is open), then sends
++	// the content, which finishes the upload
++	finishAfter := func(perms *provider.ResourcePermissions, name string, metadata map[string]string, between func()) error {
++		ids, err := initiate(perms, name, metadata)
++		Expect(err).ToNot(HaveOccurred())
++		between()
++		env.Blobstore.On("Upload", mock.Anything, mock.Anything, mock.Anything).Return(nil)
++		_, err = env.Fs.Upload(env.Ctx, storage.UploadRequest{
++			Ref:    &provider.Reference{Path: "/" + ids["simple"]},
++			Body:   io.NopCloser(bytes.NewReader(content)),
++			Length: int64(len(content)),
++		}, nil)
++		return err
++	}
++	// changed: the owner uploads other content to name (with upstream's Can edit)
++	changed := func(name string) func() {
++		return func() {
++			ids, err := initiate(canEdit(), name, map[string]string{})
++			Expect(err).ToNot(HaveOccurred())
++			env.Blobstore.On("Upload", mock.Anything, mock.Anything, mock.Anything).Return(nil)
++			other := []byte("the owner!") // 10 bytes, as initiate declares
++			_, err = env.Fs.Upload(env.Ctx, storage.UploadRequest{
++				Ref:    &provider.Reference{Path: "/" + ids["simple"]},
++				Body:   io.NopCloser(bytes.NewReader(other)),
++				Length: int64(len(other)),
++			}, nil)
++			Expect(err).ToNot(HaveOccurred())
++		}
++	}
++	unchanged := func() {}
++
++	It("refuses finishing over an empty file that changed since the upload started", func() {
++		Expect(finishAfter(cantDelete(), "empty.txt", nil, changed("empty.txt"))).To(BeAssignableToTypeOf(errtypes.Aborted("")))
++		n, err := env.Lookup.NodeFromResource(env.Ctx, ref("empty.txt"))
++		Expect(err).ToNot(HaveOccurred())
++		Expect(n.Blobsize).To(Equal(int64(len("the owner!"))))
++	})
++	It("refuses finishing the same content over a file that changed since the upload started", func() {
++		Expect(finishAfter(cantDelete(), "full.txt", checksum("sha1", sha1Sum[:]), changed("full.txt"))).
++			To(BeAssignableToTypeOf(errtypes.Aborted("")))
++	})
++	It("finishes over an empty file that didn't change", func() {
++		Expect(finishAfter(cantDelete(), "empty.txt", nil, unchanged)).To(Succeed())
++	})
++	It("doesn't pin upstream's Can edit", func() {
++		Expect(finishAfter(canEdit(), "full.txt", nil, changed("full.txt"))).To(Succeed())
++	})
 +})
 diff --git a/pkg/storage/utils/decomposedfs/upload.go b/pkg/storage/utils/decomposedfs/upload.go
-index fcb23f8..4971d2e 100644
+index fcb23f8..58614f7 100644
 --- a/pkg/storage/utils/decomposedfs/upload.go
 +++ b/pkg/storage/utils/decomposedfs/upload.go
-@@ -284,6 +284,11 @@ func (fs *Decomposedfs) InitiateUpload(ctx context.Context, ref *provider.Refere
+@@ -284,6 +284,16 @@ func (fs *Decomposedfs) InitiateUpload(ctx context.Context, ref *provider.Refere
  		return nil, errtypes.PermissionDenied(path)
  	}
  
@@ -189,16 +268,21 @@ index fcb23f8..4971d2e 100644
 +	if n.Exists && !mayReplace(ctx, rp, n, metadata["checksum"]) {
 +		return nil, errtypes.PermissionDenied(path)
 +	}
++	if n.Exists && isCantDelete(rp) {
++		if err := pinToCurrent(ctx, session, n); err != nil {
++			return nil, err
++		}
++	}
 +
  	// are we trying to overwriting a folder with a file?
  	if n.Exists && n.IsDir(ctx) {
  		return nil, errtypes.PreconditionFailed("resource is not a file")
 diff --git a/pkg/storage/utils/decomposedfs/upload_custom.go b/pkg/storage/utils/decomposedfs/upload_custom.go
 new file mode 100644
-index 0000000..f8561f4
+index 0000000..ad8c1f8
 --- /dev/null
 +++ b/pkg/storage/utils/decomposedfs/upload_custom.go
-@@ -0,0 +1,49 @@
+@@ -0,0 +1,68 @@
 +package decomposedfs
 +
 +// oc-custom: oc-custom's "Can't delete" share role may upload new files but not
@@ -248,12 +332,31 @@ index 0000000..f8561f4
 +	stored, err := n.Xattr(ctx, prefixes.ChecksumPrefix+algorithm)
 +	return err == nil && len(stored) > 0 && hex.EncodeToString(stored) == sum
 +}
++
++// pinToCurrent makes the upload replace only the file as it is now: reva checks
++// the session's If-Match against the file's etag when the upload finishes
++// (updateExistingNode), and InitiateUpload's check alone would let an upload
++// started over an empty file replace content written there in between (sessions
++// live a day). Always set, also over a client's own If-Match: the storage provider
++// has already checked that one against the current etag.
++func pinToCurrent(ctx context.Context, session interface{ SetMetadata(key, value string) }, n *node.Node) error {
++	mtime, err := n.GetMTime(ctx)
++	if err != nil {
++		return err
++	}
++	etag, err := node.CalculateEtag(n.ID, mtime)
++	if err != nil {
++		return err
++	}
++	session.SetMetadata("if-match", etag)
++	return nil
++}
 diff --git a/pkg/storage/utils/decomposedfs/upload_custom_test.go b/pkg/storage/utils/decomposedfs/upload_custom_test.go
 new file mode 100644
-index 0000000..e203b4b
+index 0000000..8f8f547
 --- /dev/null
 +++ b/pkg/storage/utils/decomposedfs/upload_custom_test.go
-@@ -0,0 +1,100 @@
+@@ -0,0 +1,157 @@
 +package decomposedfs_test
 +
 +// oc-custom: tests for the oc-custom change in InitiateUpload (upload_custom.go),
@@ -261,16 +364,19 @@ index 0000000..e203b4b
 +// upload_test.go.
 +
 +import (
++	"bytes"
 +	"crypto/md5"
 +	"crypto/sha1"
 +	"encoding/hex"
 +	"hash/adler32"
++	"io"
 +
 +	provider "github.com/cs3org/go-cs3apis/cs3/storage/provider/v1beta1"
 +	. "github.com/onsi/ginkgo/v2"
 +	. "github.com/onsi/gomega"
 +	"github.com/opencloud-eu/reva/v2/pkg/conversions"
 +	"github.com/opencloud-eu/reva/v2/pkg/errtypes"
++	"github.com/opencloud-eu/reva/v2/pkg/storage"
 +	"github.com/opencloud-eu/reva/v2/pkg/storage/utils/decomposedfs/metadata/prefixes"
 +	helpers "github.com/opencloud-eu/reva/v2/pkg/storage/utils/decomposedfs/testhelpers"
 +	"github.com/stretchr/testify/mock"
@@ -290,11 +396,16 @@ index 0000000..e203b4b
 +	ref := func(name string) *provider.Reference {
 +		return &provider.Reference{ResourceId: env.SpaceRootRes, Path: "./dir1/" + name}
 +	}
-+	// uploadWith starts an upload of 10 bytes to name with the given permissions and
++	// initiate starts an upload of 10 bytes to name with the given permissions and
 +	// upload metadata
-+	uploadWith := func(perms *provider.ResourcePermissions, name string, metadata map[string]string) error {
++	initiate := func(perms *provider.ResourcePermissions, name string, metadata map[string]string) (map[string]string, error) {
++		// replaces the previous answer (testify keeps the first match)
++		env.Permissions.ExpectedCalls = nil
 +		env.Permissions.On("AssemblePermissions", mock.Anything, mock.Anything).Return(perms, nil)
-+		_, err := env.Fs.InitiateUpload(env.Ctx, ref(name), 10, metadata)
++		return env.Fs.InitiateUpload(env.Ctx, ref(name), 10, metadata)
++	}
++	uploadWith := func(perms *provider.ResourcePermissions, name string, metadata map[string]string) error {
++		_, err := initiate(perms, name, metadata)
 +		return err
 +	}
 +	upload := func(perms *provider.ResourcePermissions, name string) error {
@@ -352,5 +463,54 @@ index 0000000..e203b4b
 +	It("leaves upstream's Can upload and Can edit as they are", func() {
 +		Expect(upload(canUpload(), "full.txt")).To(Succeed())
 +		Expect(upload(canEdit(), "full.txt")).To(Succeed())
++	})
++
++	// finishAfter starts an upload of content to name as perms (with the upload
++	// metadata), runs between (the owner, while the upload is open), then sends
++	// the content, which finishes the upload
++	finishAfter := func(perms *provider.ResourcePermissions, name string, metadata map[string]string, between func()) error {
++		ids, err := initiate(perms, name, metadata)
++		Expect(err).ToNot(HaveOccurred())
++		between()
++		env.Blobstore.On("Upload", mock.Anything, mock.Anything, mock.Anything).Return(nil)
++		_, err = env.Fs.Upload(env.Ctx, storage.UploadRequest{
++			Ref:    &provider.Reference{Path: "/" + ids["simple"]},
++			Body:   io.NopCloser(bytes.NewReader(content)),
++			Length: int64(len(content)),
++		}, nil)
++		return err
++	}
++	// changed: the owner uploads other content to name (with upstream's Can edit)
++	changed := func(name string) func() {
++		return func() {
++			ids, err := initiate(canEdit(), name, map[string]string{})
++			Expect(err).ToNot(HaveOccurred())
++			env.Blobstore.On("Upload", mock.Anything, mock.Anything, mock.Anything).Return(nil)
++			other := []byte("the owner!") // 10 bytes, as initiate declares
++			_, err = env.Fs.Upload(env.Ctx, storage.UploadRequest{
++				Ref:    &provider.Reference{Path: "/" + ids["simple"]},
++				Body:   io.NopCloser(bytes.NewReader(other)),
++				Length: int64(len(other)),
++			}, nil)
++			Expect(err).ToNot(HaveOccurred())
++		}
++	}
++	unchanged := func() {}
++
++	It("refuses finishing over an empty file that changed since the upload started", func() {
++		Expect(finishAfter(cantDelete(), "empty.txt", nil, changed("empty.txt"))).To(BeAssignableToTypeOf(errtypes.Aborted("")))
++		n, err := env.Lookup.NodeFromResource(env.Ctx, ref("empty.txt"))
++		Expect(err).ToNot(HaveOccurred())
++		Expect(n.Blobsize).To(Equal(int64(len("the owner!"))))
++	})
++	It("refuses finishing the same content over a file that changed since the upload started", func() {
++		Expect(finishAfter(cantDelete(), "full.txt", checksum("sha1", sha1Sum[:]), changed("full.txt"))).
++			To(BeAssignableToTypeOf(errtypes.Aborted("")))
++	})
++	It("finishes over an empty file that didn't change", func() {
++		Expect(finishAfter(cantDelete(), "empty.txt", nil, unchanged)).To(Succeed())
++	})
++	It("doesn't pin upstream's Can edit", func() {
++		Expect(finishAfter(canEdit(), "full.txt", nil, changed("full.txt"))).To(Succeed())
 +	})
 +})
