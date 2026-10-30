@@ -21,10 +21,10 @@ index 2462eaa..3fa1bb6 100644
  		return nil, errtypes.PreconditionFailed("resource is not a file")
 diff --git a/pkg/storage/pkg/decomposedfs/upload_custom.go b/pkg/storage/pkg/decomposedfs/upload_custom.go
 new file mode 100644
-index 0000000..0383570
+index 0000000..e757b5f
 --- /dev/null
 +++ b/pkg/storage/pkg/decomposedfs/upload_custom.go
-@@ -0,0 +1,68 @@
+@@ -0,0 +1,69 @@
 +package decomposedfs
 +
 +// oc-custom: oc-custom's "Can't delete" share role may upload new files but not
@@ -64,11 +64,12 @@ index 0000000..0383570
 +// sameContent tells whether the declared checksum is the file's own. The upload is
 +// checked against the declared checksum when it finishes (FinishUploadDecomposed,
 +// before it replaces anything; the posix driver uses the same sessions), so new
-+// content can't pass for the old. Only SHA-1 and MD5: content with a given Adler-32
-+// is easy to make.
++// content can't pass for the old. Only SHA-1: content with a given Adler-32 is easy
++// to make, and two files with the same MD5 too (a recipient could upload one and
++// later replace it with the other). OpenCloud's desktop and phone apps send SHA-1.
 +func sameContent(ctx context.Context, n *node.Node, checksum string) bool {
 +	algorithm, sum, ok := strings.Cut(checksum, " ")
-+	if !ok || sum == "" || (algorithm != "sha1" && algorithm != "md5") {
++	if !ok || sum == "" || algorithm != "sha1" {
 +		return false
 +	}
 +	stored, err := n.Xattr(ctx, prefixes.ChecksumPrefix+algorithm)
@@ -95,7 +96,7 @@ index 0000000..0383570
 +}
 diff --git a/pkg/storage/pkg/decomposedfs/upload_custom_test.go b/pkg/storage/pkg/decomposedfs/upload_custom_test.go
 new file mode 100644
-index 0000000..4d78474
+index 0000000..30ab200
 --- /dev/null
 +++ b/pkg/storage/pkg/decomposedfs/upload_custom_test.go
 @@ -0,0 +1,157 @@
@@ -195,12 +196,12 @@ index 0000000..4d78474
 +	})
 +	It("accepts the same content again (a client retrying an upload whose answer it never got)", func() {
 +		Expect(uploadWith(cantDelete(), "full.txt", checksum("sha1", sha1Sum[:]))).To(Succeed())
-+		Expect(uploadWith(cantDelete(), "full.txt", checksum("md5", md5Sum[:]))).To(Succeed())
 +	})
-+	It("refuses other content, and doesn't trust Adler-32 (easy to forge)", func() {
++	It("refuses other content, and doesn't trust Adler-32 or MD5 (easy to forge)", func() {
 +		other := sha1.Sum([]byte("something else"))
 +		Expect(uploadWith(cantDelete(), "full.txt", checksum("sha1", other[:]))).To(BeAssignableToTypeOf(errtypes.PermissionDenied("")))
 +		Expect(uploadWith(cantDelete(), "full.txt", checksum("adler32", adler32Sum.Sum(nil)))).To(BeAssignableToTypeOf(errtypes.PermissionDenied("")))
++		Expect(uploadWith(cantDelete(), "full.txt", checksum("md5", md5Sum[:]))).To(BeAssignableToTypeOf(errtypes.PermissionDenied("")))
 +	})
 +	It("leaves upstream's Can upload and Can edit as they are", func() {
 +		Expect(upload(canUpload(), "full.txt")).To(Succeed())
@@ -279,10 +280,10 @@ index fcb23f8..58614f7 100644
  		return nil, errtypes.PreconditionFailed("resource is not a file")
 diff --git a/pkg/storage/utils/decomposedfs/upload_custom.go b/pkg/storage/utils/decomposedfs/upload_custom.go
 new file mode 100644
-index 0000000..ad8c1f8
+index 0000000..2eb199a
 --- /dev/null
 +++ b/pkg/storage/utils/decomposedfs/upload_custom.go
-@@ -0,0 +1,68 @@
+@@ -0,0 +1,69 @@
 +package decomposedfs
 +
 +// oc-custom: oc-custom's "Can't delete" share role may upload new files but not
@@ -322,11 +323,12 @@ index 0000000..ad8c1f8
 +// sameContent tells whether the declared checksum is the file's own. The upload is
 +// checked against the declared checksum when it finishes (FinishUploadDecomposed,
 +// before it replaces anything; the posix driver uses the same sessions), so new
-+// content can't pass for the old. Only SHA-1 and MD5: content with a given Adler-32
-+// is easy to make.
++// content can't pass for the old. Only SHA-1: content with a given Adler-32 is easy
++// to make, and two files with the same MD5 too (a recipient could upload one and
++// later replace it with the other). OpenCloud's desktop and phone apps send SHA-1.
 +func sameContent(ctx context.Context, n *node.Node, checksum string) bool {
 +	algorithm, sum, ok := strings.Cut(checksum, " ")
-+	if !ok || sum == "" || (algorithm != "sha1" && algorithm != "md5") {
++	if !ok || sum == "" || algorithm != "sha1" {
 +		return false
 +	}
 +	stored, err := n.Xattr(ctx, prefixes.ChecksumPrefix+algorithm)
@@ -353,7 +355,7 @@ index 0000000..ad8c1f8
 +}
 diff --git a/pkg/storage/utils/decomposedfs/upload_custom_test.go b/pkg/storage/utils/decomposedfs/upload_custom_test.go
 new file mode 100644
-index 0000000..8f8f547
+index 0000000..97c55fd
 --- /dev/null
 +++ b/pkg/storage/utils/decomposedfs/upload_custom_test.go
 @@ -0,0 +1,157 @@
@@ -453,12 +455,12 @@ index 0000000..8f8f547
 +	})
 +	It("accepts the same content again (a client retrying an upload whose answer it never got)", func() {
 +		Expect(uploadWith(cantDelete(), "full.txt", checksum("sha1", sha1Sum[:]))).To(Succeed())
-+		Expect(uploadWith(cantDelete(), "full.txt", checksum("md5", md5Sum[:]))).To(Succeed())
 +	})
-+	It("refuses other content, and doesn't trust Adler-32 (easy to forge)", func() {
++	It("refuses other content, and doesn't trust Adler-32 or MD5 (easy to forge)", func() {
 +		other := sha1.Sum([]byte("something else"))
 +		Expect(uploadWith(cantDelete(), "full.txt", checksum("sha1", other[:]))).To(BeAssignableToTypeOf(errtypes.PermissionDenied("")))
 +		Expect(uploadWith(cantDelete(), "full.txt", checksum("adler32", adler32Sum.Sum(nil)))).To(BeAssignableToTypeOf(errtypes.PermissionDenied("")))
++		Expect(uploadWith(cantDelete(), "full.txt", checksum("md5", md5Sum[:]))).To(BeAssignableToTypeOf(errtypes.PermissionDenied("")))
 +	})
 +	It("leaves upstream's Can upload and Can edit as they are", func() {
 +		Expect(upload(canUpload(), "full.txt")).To(Succeed())
