@@ -1,0 +1,92 @@
+diff --git a/packages/web-app-files/src/composables/actions/files/useFileActionsDisableSync.ts b/packages/web-app-files/src/composables/actions/files/useFileActionsDisableSync.ts
+index e75468c..7d52f68 100644
+--- a/packages/web-app-files/src/composables/actions/files/useFileActionsDisableSync.ts
++++ b/packages/web-app-files/src/composables/actions/files/useFileActionsDisableSync.ts
+@@ -8,6 +8,7 @@ import {
+   useConfigStore,
+   useLoadingService,
+   useMessages,
++  useOcCustomFeatures,
+   useResourcesStore,
+   useRouter
+ } from '@opencloud-eu/web-pkg'
+@@ -20,6 +21,7 @@ export const useFileActionsDisableSync = () => {
+   const { showMessage, showErrorMessage } = useMessages()
+   const router = useRouter()
+   const { $gettext, $ngettext } = useGettext()
++  const { has } = useOcCustomFeatures()
+ 
+   const clientService = useClientService()
+   const loadingService = useLoadingService()
+@@ -97,6 +99,10 @@ export const useFileActionsDisableSync = () => {
+         if (resources.length === 0) {
+           return false
+         }
++        // oc-custom: Clients and Employees keep the shares they receive
++        if (has('noDisableSync')) {
++          return false
++        }
+ 
+         if (
+           isLocationSpacesActive(router, 'files-spaces-generic') &&
+diff --git a/packages/web-app-files/tests/unit/composables/actions/files/useFileActionsDisableSyncCustom.spec.ts b/packages/web-app-files/tests/unit/composables/actions/files/useFileActionsDisableSyncCustom.spec.ts
+new file mode 100644
+index 0000000..5cb3db4
+--- /dev/null
++++ b/packages/web-app-files/tests/unit/composables/actions/files/useFileActionsDisableSyncCustom.spec.ts
+@@ -0,0 +1,55 @@
++import { unref } from 'vue'
++import { useFileActionsDisableSync } from '../../../../../src/composables/actions/files'
++import {
++  defaultComponentMocks,
++  getComposableWrapper,
++  RouteLocation
++} from '@opencloud-eu/web-test-helpers'
++import { mock } from 'vitest-mock-extended'
++import { IncomingShareResource } from '@opencloud-eu/web-client'
++import { User } from '@opencloud-eu/web-client/graph/generated'
++
++// oc-custom: Clients and Employees can't disable a share's sync; upstream's types can
++
++describe('useFileActionsDisableSync (oc-custom)', () => {
++  describe('isVisible property', () => {
++    it.each([
++      ['User', 'd7beeea8-8ff4-406b-8fb6-ab2dd81e6b11', true],
++      ['Client', '38f0649f-b600-4188-b138-fbd2c773cc43', false],
++      ['Employee', '12047bc6-9aa3-49f6-8d78-e64b3065cd99', false]
++    ])('in "Shared with me" for a %s: %s', (_, typeId, visible) => {
++      getWrapper({
++        typeId,
++        setup: ({ actions }) => {
++          expect(
++            unref(actions)[0].isVisible({
++              space: null,
++              resources: [{ syncEnabled: true } as IncomingShareResource]
++            })
++          ).toBe(visible)
++        }
++      })
++    })
++  })
++})
++
++function getWrapper({
++  setup,
++  typeId
++}: {
++  setup: (instance: ReturnType<typeof useFileActionsDisableSync>) => void
++  typeId: string
++}) {
++  const mocks = defaultComponentMocks({
++    currentRoute: mock<RouteLocation>({ name: 'files-shares-with-me' })
++  })
++  return getComposableWrapper(() => setup(useFileActionsDisableSync()), {
++    mocks,
++    provide: mocks,
++    pluginOptions: {
++      piniaOptions: {
++        userState: { user: mock<User>({ appRoleAssignments: [{ id: typeId } as any] }) }
++      }
++    }
++  })
++}
