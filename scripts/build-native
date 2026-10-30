@@ -94,5 +94,6 @@ rm "$repo/out/authelia.tar.gz"
 # 4. The image: the official one with our binaries
 docker build --build-arg "BASE_IMAGE=$BASE_IMAGE" -t "$tag" "$repo"
 docker run --rm --entrypoint sh "$tag" -c 'opencloud version | head -2 && ! ldd /usr/bin/opencloud | grep "not found" &&
-    authelia --version && manage-api new-token > /dev/null'
+    authelia --version && manage-api new-token > /dev/null &&
+    d=$(echo pw | manage-api hash-password) && authelia crypto hash validate --password pw -- "$d" | grep -q "password matches"'
 echo "Built $tag"

@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -19,6 +20,7 @@ import (
 	"unicode"
 
 	"go.yaml.in/yaml/v3"
+	"golang.org/x/crypto/argon2"
 )
 
 // The shortest password; deploy/lib.sh (PASSWORD_MIN_LENGTH) and Authelia's
@@ -62,7 +64,7 @@ type authelia struct {
 func newAuthelia(usersFile, lockFile, config string) *authelia {
 	a := &authelia{usersFile: usersFile, lockFile: lockFile, config: config}
 	a.cli = a.runCLI
-	a.hash = a.cliHash
+	a.hash = hashPassword
 	return a
 }
 
@@ -77,23 +79,29 @@ func (a *authelia) runCLI(ctx context.Context, args ...string) (string, error) {
 	return string(out), err
 }
 
-// cliHash uses Authelia's own hashing, so the digest is what Authelia
-// expects. The password is on the tool's command line inside this container
-// only (its CLI takes it no other way), as with users.sh.
-func (a *authelia) cliHash(ctx context.Context, password string) (string, error) {
-	ctx, cancel := context.WithTimeout(ctx, time.Minute)
-	defer cancel()
-	out, err := exec.CommandContext(ctx, "authelia", "crypto", "hash", "generate", "argon2",
-		"--password="+password).CombinedOutput()
-	if err != nil {
-		return "", fmt.Errorf("authelia crypto hash: %v: %s", err, lastLine(string(out)))
+// argon2id's settings: Authelia's defaults (authelia crypto hash generate
+// argon2, and the file backend without a password section, as in deploy's
+// configuration.yml). Authelia checks a digest with the settings written in
+// it, so other settings there would change only the cost.
+const (
+	argonMemoryKiB   = 65536
+	argonIterations  = 3
+	argonParallelism = 4
+	argonKeyLength   = 32
+	argonSaltLength  = 16
+)
+
+// hashPassword returns Authelia's argon2id digest of a password. Made here,
+// not with Authelia's CLI: that takes the password only on its command line,
+// where anyone who can list the processes sees it.
+func hashPassword(_ context.Context, password string) (string, error) {
+	salt := make([]byte, argonSaltLength)
+	if _, err := rand.Read(salt); err != nil {
+		return "", err
 	}
-	for _, line := range strings.Split(string(out), "\n") {
-		if d, ok := strings.CutPrefix(strings.TrimSpace(line), "Digest: "); ok && d != "" {
-			return d, nil
-		}
-	}
-	return "", errors.New("authelia crypto hash printed no digest")
+	key := argon2.IDKey([]byte(password), salt, argonIterations, argonMemoryKiB, argonParallelism, argonKeyLength)
+	return fmt.Sprintf("$argon2id$v=%d$m=%d,t=%d,p=%d$%s$%s", argon2.Version, argonMemoryKiB, argonIterations,
+		argonParallelism, base64.RawStdEncoding.EncodeToString(salt), base64.RawStdEncoding.EncodeToString(key)), nil
 }
 
 // --- Reading

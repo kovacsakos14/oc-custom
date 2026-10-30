@@ -14,17 +14,23 @@
 //
 //	manage-api [serve]   the API (settings from the environment, see config)
 //	manage-api new-token prints a new token and the SHA-256 to store
+//	manage-api hash-password  prints Authelia's digest of the password on
+//	                     stdin (deploy's users.sh: never on a command line)
 package main
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
+	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -97,6 +103,11 @@ func main() {
 	case "new-token":
 		token, hash := newToken()
 		fmt.Printf("token: %s\nsha256: %s\n", token, hash)
+	case "hash-password":
+		if err := printHash(os.Stdin); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
 	case "serve":
 		log := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 		c, err := loadConfig()
@@ -109,7 +120,29 @@ func main() {
 			os.Exit(1)
 		}
 	default:
-		fmt.Fprintln(os.Stderr, "Usage: manage-api [serve | new-token]")
+		fmt.Fprintln(os.Stderr, "Usage: manage-api [serve | new-token | hash-password]")
 		os.Exit(2)
 	}
+}
+
+// printHash prints the digest of the password read from r: all of it, less
+// one line end; at most 1024 bytes, as the API takes.
+func printHash(r io.Reader) error {
+	b, err := io.ReadAll(io.LimitReader(r, 1027))
+	if err != nil {
+		return err
+	}
+	pw := strings.TrimSuffix(strings.TrimSuffix(string(b), "\n"), "\r")
+	switch {
+	case pw == "":
+		return errors.New("no password on stdin")
+	case len(pw) > 1024:
+		return errors.New("the password is longer than 1024 bytes")
+	}
+	d, err := hashPassword(context.Background(), pw)
+	if err != nil {
+		return err
+	}
+	fmt.Println(d)
+	return nil
 }

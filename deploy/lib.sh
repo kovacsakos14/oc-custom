@@ -65,16 +65,18 @@ yq_start() {
     EXIT_HOOKS+=('docker rm -f "$YQ_CONTAINER" > /dev/null 2>&1')
 }
 
-# hash_password PASSWORD: an argon2id hash from Authelia's own tool, in the running
-# Authelia container (about 1 s), or a new one when it isn't running (setup.sh before
-# the first start; about 2.5 s). The password goes through stdin; it's on the tool's
-# command line in that container briefly (its CLI takes it no other way).
+# hash_password PASSWORD: Authelia's argon2id digest (with Authelia's default settings),
+# made by the management API's program in the oc-custom image (7.2.4-13 or later; about
+# 1 s). The password goes in on stdin and is never on a command line, as it would be with
+# Authelia's own CLI (it takes it no other way). Prints nothing when it fails.
 hash_password() {
-    local cmd='authelia crypto hash generate argon2 --password "$(cat)"' digest
-    digest="$(printf '%s' "$1" | docker compose exec -T authelia sh -c "$cmd" 2> /dev/null | sed -n 's/^Digest: //p')"
-    [ -n "$digest" ] ||
-        digest="$(printf '%s' "$1" | docker run --rm -i "$(conf AUTHELIA_IMAGE)" sh -c "$cmd" | sed -n 's/^Digest: //p')"
-    printf '%s\n' "$digest"
+    local digest
+    digest="$(printf '%s' "$1" | docker run --rm -i --network none --entrypoint manage-api "$(conf OC_IMAGE)" \
+        hash-password)" || true
+    case "$digest" in
+        '$argon2id$'*) printf '%s\n' "$digest" ;;
+        *) echo "Couldn't hash with OC_IMAGE's manage-api (it needs 7.2.4-13 or later)" >&2 ;;
+    esac
 }
 
 USERS_LOCK=authelia/.users.lock
