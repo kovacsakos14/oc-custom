@@ -278,14 +278,14 @@ func (a *api) notAdmin(ctx context.Context, user string) error {
 			return errAdmin
 		}
 	}
-	role, err := a.oc.role(ctx, user)
+	admin, err := a.oc.isAdmin(ctx, user)
 	if errors.Is(err, errNoUser) {
 		return nil
 	}
 	if err != nil {
 		return errStatus(http.StatusBadGateway, "OpenCloud: %v", err)
 	}
-	if role == roleAdmin {
+	if admin {
 		return errAdmin
 	}
 	return nil

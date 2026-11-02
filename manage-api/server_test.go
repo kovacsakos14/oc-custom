@@ -22,10 +22,11 @@ import (
 const roleClient = "38f0649f-b600-4188-b138-fbd2c773cc43"
 
 // fakeOpenCloud answers what the API asks OpenCloud, for the users in roles
-// (name -> role id), and records tokens: each must be revoked once used.
+// (name -> role ids, all their app role assignments), and records tokens:
+// each must be revoked once used.
 type fakeOpenCloud struct {
 	mu      sync.Mutex
-	roles   map[string]string
+	roles   map[string][]string
 	tokens  map[string]string // token -> user, while valid
 	made    int
 	emails  map[string]settingValue
@@ -59,7 +60,11 @@ func (f *fakeOpenCloud) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	switch {
 	case r.Method == "GET" && r.URL.Path == "/graph/v1.0/me":
-		fmt.Fprintf(w, `{"appRoleAssignments":[{"appRoleId":%q}]}`, f.roles[user])
+		var ids []string
+		for _, id := range f.roles[user] {
+			ids = append(ids, fmt.Sprintf(`{"appRoleId":%q}`, id))
+		}
+		fmt.Fprintf(w, `{"appRoleAssignments":[%s]}`, strings.Join(ids, ","))
 	case r.Method == "DELETE" && r.URL.Path == "/auth-app/tokens":
 		if r.URL.Query().Get("token") != tok {
 			http.Error(w, "only its own token in this fake", 400)
@@ -108,7 +113,7 @@ type testServer struct {
 func newTestServer(t *testing.T, withAuthelia bool) *testServer {
 	t.Helper()
 	f := &fakeOpenCloud{
-		roles:  map[string]string{"admin": roleAdmin, "alice": roleUser, "balabit": roleClient, "boss": roleAdmin},
+		roles:  map[string][]string{"admin": {roleAdmin}, "alice": {roleUser}, "balabit": {roleClient}, "boss": {roleAdmin}},
 		tokens: map[string]string{}, emails: map[string]settingValue{}, drives: map[string]string{},
 	}
 	ocSrv := httptest.NewServer(f)
@@ -290,6 +295,27 @@ func TestPersonalSpace(t *testing.T) {
 	}
 	if code, _ := s.do(t, "POST", "/v1/opencloud/users/nobody/personal-space", testToken, ""); code != 404 {
 		t.Errorf("unknown user: %d", code)
+	}
+}
+
+// A later Admin assignment behind a User one is still an admin: roles can
+// be assigned more than once, and taking only the first would let the API
+// act on admins.
+func TestHiddenAdminIsRefused(t *testing.T) {
+	s := newTestServer(t, false)
+	s.oc.roles["sly"] = []string{roleUser, roleAdmin}
+	for _, c := range []struct{ method, path, body string }{
+		{"PUT", "/v1/opencloud/users/sly/emails", `{"disabled":true}`},
+		{"GET", "/v1/opencloud/users/sly/emails", ""},
+		{"POST", "/v1/opencloud/users/sly/personal-space", ""},
+	} {
+		if code, m := s.do(t, c.method, c.path, testToken, c.body); code != 403 {
+			t.Errorf("%s %s: %d %v", c.method, c.path, code, m)
+		}
+	}
+	// No action ran for sly: only the role check made a token there
+	if s.oc.drives["sly"] != "" {
+		t.Error("sly's drives were asked for")
 	}
 }
 

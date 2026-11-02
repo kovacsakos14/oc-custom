@@ -94,13 +94,27 @@ func lastLine(s string) string {
 	return lines[len(lines)-1]
 }
 
+// hasRole reports whether one of the role ids is id. OpenCloud can assign
+// more than one app role to an account, so every assignment must be
+// checked: the first one may be User while a later one is Admin, which
+// would let this API act on admins.
+func hasRole(ids []string, id string) bool {
+	for _, v := range ids {
+		if v == id {
+			return true
+		}
+	}
+	return false
+}
+
 // userSession is one user's token, for one action.
 type userSession struct {
 	o     *openCloud
 	ctx   context.Context
 	user  string
 	token string
-	role  string // the user's role id
+	role  string // the user's first role assignment's id
+	roles []string // all of the user's app role assignment ids
 }
 
 // asUser makes a token for user, refuses admins, runs fn and revokes the
@@ -111,7 +125,7 @@ func (o *openCloud) asUser(ctx context.Context, user string, fn func(*userSessio
 		return err
 	}
 	defer s.revoke()
-	if s.role == roleAdmin {
+	if hasRole(s.roles, roleAdmin) {
 		return errAdmin
 	}
 	return fn(s)
@@ -132,21 +146,26 @@ func (o *openCloud) session(ctx context.Context, user string) (*userSession, err
 		s.revoke()
 		return nil, err
 	}
-	if len(me.Roles) > 0 {
-		s.role = me.Roles[0].ID
+	s.roles = make([]string, 0, len(me.Roles))
+	for _, r := range me.Roles {
+		s.roles = append(s.roles, r.ID)
+	}
+	if len(s.roles) > 0 {
+		s.role = s.roles[0]
 	}
 	return s, nil
 }
 
-// role returns user's role id in OpenCloud (errNoUser when there's no such
-// user).
-func (o *openCloud) role(ctx context.Context, user string) (string, error) {
+// isAdmin reports whether user is an Admin in OpenCloud (errNoUser when
+// there's no such user). Every role assignment counts (hasRole); the first
+// one alone can't be trusted.
+func (o *openCloud) isAdmin(ctx context.Context, user string) (bool, error) {
 	s, err := o.session(ctx, user)
 	if err != nil {
-		return "", err
+		return false, err
 	}
 	s.revoke()
-	return s.role, nil
+	return hasRole(s.roles, roleAdmin), nil
 }
 
 func (s *userSession) revoke() {
@@ -272,9 +291,10 @@ func (s *userSession) setEmailsDisabled(disabled bool) (emailSetting, error) {
 
 // personalSpace creates a User's personal space (asking for it does) and
 // returns its id. Only Users have one: the other types' is disabled or
-// missing, and must stay so.
+// missing, and must stay so. Any User assignment counts (roles can be
+// assigned more than once, and asUser has already refused Admin ones).
 func (s *userSession) personalSpace() (string, error) {
-	if s.role != roleUser {
+	if !hasRole(s.roles, roleUser) {
 		return "", errStatus(http.StatusConflict, "only a User has a personal space")
 	}
 	var drives struct {
