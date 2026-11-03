@@ -269,12 +269,12 @@ check "the user file is private (600)" '[ "$(stat -c %a authelia/users/users_dat
 
 echo "  --    the management API (with Authelia), at ${SECONDS}s"
 check "the API's program came from MANAGE_API_IMAGE (the bin container)" \
-    '[ "$(docker inspect -f "{{.Config.Image}}" "$(docker compose ps -q manage-api-bin)")" = "$API_IMAGE" ]'
+    'bin="$(docker compose ps -aq manage-api-bin)" && [ -n "$bin" ] &&
+     [ "$(docker inspect -f "{{.Config.Image}}" "$bin")" = "$API_IMAGE" ]'
 check "the API runs the oc-custom image with the copied program" \
-    'api="$(docker inspect -f "{{.Image}}" "$(docker compose ps -q manage-api)")" &&
-     oc="$(docker inspect -f "{{.Image}}" "$(docker compose ps -q opencloud)")" &&
-     [ "$api" = "$oc" ] &&
-     docker run --rm --entrypoint sh "$(docker inspect -f "{{.Config.Image}}" "$(docker compose ps -q manage-api)")" -c "[ -x /opt/manage-api/manage-api ]"'
+    'api="$(docker compose ps -aq manage-api)" && oc="$(docker compose ps -aq opencloud)" && [ -n "$api" ] &&
+     [ "$(docker inspect -f "{{.Image}}" "$api")" = "$(docker inspect -f "{{.Image}}" "$oc")" ] &&
+     docker exec "$api" sh -c "[ -x /opt/manage-api/manage-api ]"'
 check "setup.sh stored only the token's SHA-256 (600)" \
     '[ "$(stat -c %a manage-api/token.sha256)" = 600 ] && ! grep -qF "$(cat .manage-token)" manage-api/token.sha256'
 check "the API refuses a missing or wrong token (401)" \
