@@ -88,7 +88,11 @@ All under `https://<your domain>/manage-api/`, with the header `Authorization: B
 3. `./setup.sh`: it shows the API's token **once**; enter it in the management tool. Only its SHA-256 is kept (`manage-api/token.sha256`). `./setup.sh --new-manage-token` replaces it, and the old one stops working at once.
 4. Copy the rewritten `swag/<OC_STACK>.subdomain.conf` to SWAG again and restart SWAG (the site has a `/manage-api/` location; without the API it answers 502).
 
-The API runs from the oc-custom image (`OC_IMAGE`). `MANAGE_API_IMAGE` in `.env` (from 7.2.4-10) runs it from another image of it instead, one with its own release cycle; `setup.sh` then makes the token with that image. The server must be able to pull it (`docker login` first for a private registry).
+The API runs from its own image: set `MANAGE_API_IMAGE` in `.env` (its own release
+cycle; `setup.sh` and `lib.sh` use that image for its token and password hashes, and
+`compose.manage.yaml` refuses to start without it — the built-in manage-api in the
+oc-custom image is on its way out). The server must be able to pull it (`docker login`
+first for a private registry).
 5. `docker compose up -d`.
 
 **Branding through the API (from 7.2.4-11):** `compose.manage.yaml` mounts the branding folder (`branding/`) writable into the API's container (OpenCloud's mount stays read-only), and `compose.manage-authelia.yaml` Authelia's asset folder (`authelia/assets/`: `logo.png` and `favicon.ico` for Authelia's sign-in page; empty, Authelia shows its own). An API image that offers branding (`MANAGE_API_IMAGE`; the one in the oc-custom image doesn't) writes them, checking every file, and keeps the versions it replaces in `manage-api/state/`. Without such an image, nothing writes there and both folders stay as you edit them by hand.

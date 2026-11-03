@@ -98,6 +98,12 @@ stack() {
     if [ "$authelia" = yes ] && [ -n "$API_IMAGE" ]; then
         sed -i "s|^#MANAGE_API_IMAGE=.*|MANAGE_API_IMAGE=$API_IMAGE|" "$dir/.env"
     fi
+    # compose.manage.yaml needs MANAGE_API_IMAGE (the built-in API is on its
+    # way out). Without --manage-api-image the test keeps using the oc-custom
+    # image, whose manage-api stays until it's removed from the image
+    if [ ! -s "$dir/.env" ] || ! grep -q '^MANAGE_API_IMAGE=' "$dir/.env"; then
+        echo "MANAGE_API_IMAGE=$IMAGE" >> "$dir/.env"
+    fi
     # The management API's token is shown once, indented on its own line
     (cd "$dir" && ./setup.sh) | awk '/shown only now/ { f = 1 } f && /^    [A-Za-z0-9_-]{43}$/ { print $1; exit }' > "$dir/.manage-token"
     [ -s "$dir/.manage-token" ] || { echo "setup.sh showed no management API token" >&2; exit 1; }

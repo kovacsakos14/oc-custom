@@ -66,16 +66,17 @@ yq_start() {
 }
 
 # hash_password PASSWORD: Authelia's argon2id digest (with Authelia's default settings),
-# made by the management API's program in the oc-custom image (7.2.4-13 or later; about
-# 1 s). The password goes in on stdin and is never on a command line, as it would be with
+# made by the management API's program in its own image, MANAGE_API_IMAGE (about
+# 1 s; it has to be set anyway — compose.manage.yaml requires it). The password goes in
+# on stdin and is never on a command line, as it would be with
 # Authelia's own CLI (it takes it no other way). Prints nothing when it fails.
 hash_password() {
     local digest
-    digest="$(printf '%s' "$1" | docker run --rm -i --network none --entrypoint manage-api "$(conf OC_IMAGE)" \
+    digest="$(printf '%s' "$1" | docker run --rm -i --network none --entrypoint manage-api "$(conf MANAGE_API_IMAGE)" \
         hash-password)" || true
     case "$digest" in
         '$argon2id$'*) printf '%s\n' "$digest" ;;
-        *) echo "Couldn't hash with OC_IMAGE's manage-api (it needs 7.2.4-13 or later)" >&2 ;;
+        *) echo "Couldn't hash with MANAGE_API_IMAGE's manage-api (is it set, and does the server reach it?)" >&2 ;;
     esac
 }
 

@@ -8,8 +8,11 @@
 
 services:
   manage-api:
-    # The API in the oc-custom image, or another image of it (MANAGE_API_IMAGE)
-    image: ${MANAGE_API_IMAGE:-${OC_IMAGE}}
+    # The API alone in its own image (MANAGE_API_IMAGE). The built-in
+    # manage-api in the oc-custom image is on its way out: deployments now
+    # name the API's image (its own release cycle); the server must be
+    # able to pull it (docker login for a private registry).
+    image: ${MANAGE_API_IMAGE:?set MANAGE_API_IMAGE in .env to the management API's image (it has its own release cycle)}
     container_name: ${OC_STACK}-manage-api
     user: "${PUID}:${PGID}"
     entrypoint: [manage-api, serve]

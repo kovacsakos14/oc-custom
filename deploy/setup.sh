@@ -123,8 +123,9 @@ manage_token=""
 if with_manage && { [ -n "$new_manage_token" ] || [ ! -s manage-api/token.sha256 ]; }; then
     mkdir -p manage-api
     api_image="$(conf MANAGE_API_IMAGE)"
-    out="$(docker run --rm --entrypoint manage-api "${api_image:-$(conf OC_IMAGE)}" new-token)" ||
-        die "Couldn't make the management API's token (is OC_IMAGE 7.2.4-9 or later, or MANAGE_API_IMAGE set?)"
+    [ -n "$api_image" ] || die "MANAGE_API_IMAGE is needed (set it in .env): the built-in manage-api is on its way out, the management API runs from its own image"
+    out="$(docker run --rm --entrypoint manage-api "$api_image" new-token)" ||
+        die "Couldn't make the management API's token (is MANAGE_API_IMAGE pullable on this server? docker login first if it's private)"
     manage_token="$(sed -n 's/^token: //p' <<< "$out")"
     hash="$(sed -n 's/^sha256: //p' <<< "$out")"
     [ -n "$manage_token" ] && [ -n "$hash" ] || die "Couldn't make the management API's token"
