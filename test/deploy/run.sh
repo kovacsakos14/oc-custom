@@ -32,7 +32,7 @@ done
 # The management API runs from its own image (the oc-custom image doesn't
 # carry it since the built-in removal): without --manage-api-image there is
 # no API to test (--clean needs none)
-[ -n "$API_IMAGE" ] || [ -n "$KEEP" ] || { echo "give --manage-api-image: the oc-custom image carries the management API no more (e.g. a locally built API image)" >&2; exit 1; }
+[ -n "$API_IMAGE" ] || [ "$KEEP" = clean ] || { echo "give --manage-api-image: the oc-custom image carries the management API no more (e.g. a locally built API image)" >&2; exit 1; }
 
 SWAG_IMAGE=lscr.io/linuxserver/swag:5.8.0-ls493@sha256:c672b9ed0dcaabad0aad95a965493be0b3483673cd5f2e3d2105828be6603bde
 MAILPIT_IMAGE=axllent/mailpit:v1.31.6@sha256:23fe39e81bde596a918000b3135c0f85dc8bb4c9ea6be274b051143f3e300387

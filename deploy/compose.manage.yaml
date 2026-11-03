@@ -15,6 +15,11 @@ services:
     container_name: ${OC_STACK}-manage-api-bin
     user: "0:0"
     command: ["copy-to", "/opt/manage-api"]
+    # It only copies a file: no network, no capabilities
+    network_mode: none
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
     volumes:
       - manage-api-bin:/opt/manage-api
     restart: "no"
@@ -27,6 +32,12 @@ services:
     # -d" reruns manage-api-bin and recreates this container with it.
     image: ${OC_IMAGE:?set OC_IMAGE in .env to the oc-custom image}
     container_name: ${OC_STACK}-manage-api
+    # The API's image: this container's own image is the oc-custom one and
+    # the program comes through the volume, so without this label a new
+    # MANAGE_API_IMAGE would only rerun manage-api-bin and leave the old
+    # program running here
+    labels:
+      manage-api.image: ${MANAGE_API_IMAGE}
     user: "${PUID}:${PGID}"
     entrypoint: ["/opt/manage-api/manage-api", "serve"]
     # OpenCloud's network namespace: OpenCloud's CLI here (a user's app
