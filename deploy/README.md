@@ -15,7 +15,7 @@ This folder is a complete OpenCloud server: oc-custom, optionally [Authelia](htt
 Users are always created in OpenCloud. With Authelia they also need an entry in Authelia's user file; `./users.sh` does both.
 
 ## What you need
-- A Linux server with Docker and Docker Compose 2.24 or newer.
+- A Linux server with Docker and Docker Compose 2.24 or newer. With Authelia also `script` (util-linux; on Debian and Ubuntu it's in `bsdutils`, there by default): `setup.sh` and `users.sh` type passwords at Authelia's CLI prompt through it, so they're never on a command line.
 - SWAG running on the same server, with a certificate that covers the domain (e.g. `SUBDOMAINS=cloud` for `cloud.example.com`).
 - A DNS record for the domain pointing at the server. Authelia lives under `/authelia` on the same domain, so one record is enough.
 - For e-mail: an SMTP account. Without one everything works, but Authelia writes its one-time codes to a file instead of e-mailing them (see "Without SMTP").
@@ -56,7 +56,7 @@ The desktop and mobile apps connect to `https://<your domain>` as usual. They op
 - **2FA for other users:** `users.sh 2fa <user> on` puts them in Authelia's `2fa` group, which `authelia/configuration.yml` asks for 2FA as it asks admins. At their next sign-in they register an authenticator app; `off` takes them out again (their registered app stays until `reset-2fa`). Admins always need 2FA, so `2fa` refuses them. A server set up before 7.2.4-9 needs the new `authelia/configuration.yml` first (the `group:2fa` rule; `users.sh 2fa` says so).
 - **Changing a `user` or `admin` to `client`, `employee` or `light`** disables their personal space (`users.sh role` asks first): the files stay, but they can't reach them, and their shares and public links from it stop working. Only an admin can enable it again (oc-custom's reva patch 2); `users.sh role` back to `user` or `admin` does, and the shares and links work again. To get rid of the files for good, delete the space in Admin settings → Spaces.
 - With Authelia, OpenCloud's own password for each user is random and unused; passwords are checked by Authelia only.
-- `users.sh` starts one helper container (the pinned yq image) per run and removes it at exit; Authelia's password hashes are made by a short-lived container of `OC_IMAGE` (`manage-api hash-password`, from 7.2.4-13: the password goes in on stdin, never on a command line). On a small VM an `add` with Authelia takes about 8–14 s.
+- `users.sh` starts one helper container (the pinned yq image) per run and removes it at exit; Authelia's password hashes are made by Authelia's own CLI, in the running `authelia` container (or, when it isn't running, a short-lived container of `OC_IMAGE`, which carries the same Authelia version; `setup.sh` always uses that one); the password is typed at the CLI's prompt through a pseudo-terminal (`script`), never put on a command line. Passwords with control characters (a tab, a line end) are refused. On a small VM an `add` with Authelia takes about 8–14 s.
 - `users.sh` uses an app token for `admin` that it makes at each run, keeps in memory and revokes when it's done (it would expire after 10 minutes anyway). Older versions kept one in `.admin-token` for a year; `users.sh` removes that file, and the old token should be deleted under the admin's Settings → App Tokens.
 - Impersonation (an admin's app token making tokens for other users) is off; `AUTH_APP_ENABLE_IMPERSONATION=true` in `.env` turns it on for management tools that need it. `users.sh` doesn't.
 - Users created in OpenCloud's web UI (Admin settings → Users) exist only in OpenCloud. With Authelia they can't sign in until they have an entry in Authelia's file: create them with `users.sh` instead.
@@ -89,8 +89,8 @@ All under `https://<your domain>/manage-api/`, with the header `Authorization: B
 4. Copy the rewritten `swag/<OC_STACK>.subdomain.conf` to SWAG again and restart SWAG (the site has a `/manage-api/` location; without the API it answers 502).
 
 The API runs from its own image: set `MANAGE_API_IMAGE` in `.env` (its own release
-cycle; `setup.sh` and `lib.sh` use that image for the token and password hashes, and
-`compose.manage.yaml` refuses to start without it). The server must be able to pull
+cycle; `setup.sh` makes the API's token with that image, and `compose.manage.yaml`
+refuses to start without it). The server must be able to pull
 it (`docker login` first for a private registry).
 5. `docker compose up -d`.
 
@@ -100,7 +100,7 @@ it (`docker login` first for a private registry).
 - **It never acts on admins:** any change to a member of Authelia's `admins` group or to an OpenCloud Admin is refused (403), and nobody can be added to `admins` or taken out of it. So it can't turn an admin's 2FA off either: admins get 2FA from `admins`, and `two_factor` only changes the separate `2fa` group. Admins stay with `users.sh` on the server. So a leaked token reaches only the other accounts, which the management tool's admin app token can reach anyway.
 - **The token:** 256 random bits, compared in constant time; after 10 wrong tokens from one address within 10 minutes, that address is refused for the rest of the 10 minutes. The address is SWAG's `X-Real-IP` only for requests from SWAG's container (`SWAG_CONTAINER` in `.env`, default `swag`; `MANAGE_API_TRUSTED_PROXIES` in `compose.manage.yaml`); from any other container the header is ignored, so nothing else on SWAG's network can block the management tool's address by sending bad tokens in its name. If `SWAG_CONTAINER` is wrong, the API logs "no trusted proxy resolves" at start and counts everyone as SWAG.
 - **Per-user tokens never leave the server:** for the OpenCloud endpoints the API makes an app token for that one user with OpenCloud's own CLI, valid for a minute, does the one thing and revokes it.
-- **Authelia's user file** is changed exactly as `users.sh` does it (the same lock, the whole file checked, then renamed into place), so both can be used side by side. Password hashes are made in Go with Authelia's default argon2id settings (from 7.2.4-13; before, with Authelia's CLI, which has the password on its command line), checked against Authelia's CLI at each build; 2FA resets use Authelia's own code (its CLI, the musl build of `AUTHELIA_IMAGE`, is in the oc-custom image).
+- **Authelia's user file** is changed exactly as `users.sh` does it (the same lock, the whole file checked, then renamed into place), so both can be used side by side. Password hashes are made in Go with Authelia's default argon2id settings (the deploy test signs in with passwords the API set); 2FA resets use Authelia's own code (its CLI, the musl build of `AUTHELIA_IMAGE`, is in the oc-custom image).
 - **Every change is logged** (`docker compose logs manage-api`), without passwords.
 - **No port of its own:** it's reached through SWAG, and by the containers on SWAG's network (`<OC_STACK>-opencloud:9300`), never from the host's or the internet's side directly. To let only the management tool's address in, uncomment the `allow`/`deny` lines in the site's `/manage-api/` location.
 

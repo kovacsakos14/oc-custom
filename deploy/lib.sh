@@ -65,19 +65,45 @@ yq_start() {
     EXIT_HOOKS+=('docker rm -f "$YQ_CONTAINER" > /dev/null 2>&1')
 }
 
-# hash_password PASSWORD: Authelia's argon2id digest (with Authelia's default settings),
-# made by the management API's program in its own image, MANAGE_API_IMAGE (about
-# 1 s; it has to be set anyway — compose.manage.yaml requires it). The password goes in
-# on stdin and is never on a command line, as it would be with
-# Authelia's own CLI (it takes it no other way). Prints nothing when it fails.
+# hash_password PASSWORD: Authelia's argon2id digest (Authelia's default settings), made by
+# Authelia's own CLI: in the running Authelia container when there is one (users.sh, about
+# 1 s), otherwise in a short-lived OC_IMAGE container, which carries the same Authelia
+# version (setup.sh, before Authelia runs, or when it's down or broken; about 3 s).
+# The CLI takes a password only on its command line, where every process on the host could
+# read it, or at its own prompt, which it shows only on a terminal: script(1) gives it a
+# pseudo-terminal, so the password goes in on stdin and is never on a command line.
+# Prints nothing when it fails.
 hash_password() {
-    local digest
-    digest="$(printf '%s' "$1" | docker run --rm -i --network none --entrypoint manage-api "$(conf MANAGE_API_IMAGE)" \
-        hash-password)" || true
+    local pw="$1" image digest=""
+    case "$pw" in
+        *[[:cntrl:]]*) echo "The password has a control character (a tab or a line end); choose another" >&2; return 0 ;;
+    esac
+    [ "${#pw}" -le 1024 ] || { echo "The password is longer than 1024 characters" >&2; return 0; }
+    command -v script > /dev/null ||
+        { echo "Hashing passwords needs script(1) on this host (util-linux; on Debian and Ubuntu: bsdutils)" >&2; return 0; }
+    if [ -n "$(docker compose ps -q --status running authelia 2> /dev/null)" ]; then
+        digest="$(_hash_in "docker compose exec authelia authelia" "$pw")"
+    fi
+    if [ -z "$digest" ]; then
+        image="$(conf OC_IMAGE)"
+        case "$image" in
+            '' | *[!A-Za-z0-9._/:@-]*) echo "OC_IMAGE in .env isn't an image name: '$image'" >&2; return 0 ;;
+        esac
+        digest="$(_hash_in "docker run --rm -it --network none --entrypoint authelia $image" "$pw")"
+    fi
     case "$digest" in
         '$argon2id$'*) printf '%s\n' "$digest" ;;
-        *) echo "Couldn't hash with MANAGE_API_IMAGE's manage-api (is it set, and does the server reach it?)" >&2 ;;
+        *) echo "Couldn't hash the password with Authelia's CLI (in the authelia container or OC_IMAGE)" >&2 ;;
     esac
+}
+
+# _hash_in "COMMAND" PASSWORD: runs COMMAND (Authelia's CLI, from fixed words and a checked
+# image name) with "crypto hash generate argon2" in a pseudo-terminal, types the password
+# at its prompt and prints the digest it shows (nothing on failure).
+_hash_in() {
+    printf '%s\n' "$2" |
+        timeout 300 script -qec "$1 crypto hash generate argon2 --no-confirm" /dev/null 2> /dev/null |
+        tr -d '\r' | sed -n 's/^Digest: //p' || true
 }
 
 USERS_LOCK=authelia/.users.lock
