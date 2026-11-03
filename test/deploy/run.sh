@@ -6,8 +6,9 @@
 # afterwards. Needs Docker; about 10 minutes.
 #   test/deploy/run.sh [--image IMAGE] [--manage-api-image IMAGE] [--keep]
 #     --image  the oc-custom image (default: the one versions.env builds)
-#     --manage-api-image  another image for the Authelia stack's management
-#              API (MANAGE_API_IMAGE; default: the one in the oc-custom image)
+#     --manage-api-image  IMAGE for the management API (MANAGE_API_IMAGE;
+#              needed: the oc-custom image carries the API no more — e.g. a
+#              locally built API image)
 #     --keep   leave everything running (remove it with --clean)
 #   test/deploy/run.sh --clean
 set -euo pipefail
@@ -31,7 +32,7 @@ done
 # The management API runs from its own image (the oc-custom image doesn't
 # carry it since the built-in removal): without --manage-api-image there is
 # no API to test (--clean needs none)
-[ -n "$API_IMAGE" ] || [ -n "$KEEP" ] || { echo "give --manage-api-image: the oc-custom image carries the management API no more (e.g. a locally built cloud-manage-api image)" >&2; exit 1; }
+[ -n "$API_IMAGE" ] || [ -n "$KEEP" ] || { echo "give --manage-api-image: the oc-custom image carries the management API no more (e.g. a locally built API image)" >&2; exit 1; }
 
 SWAG_IMAGE=lscr.io/linuxserver/swag:5.8.0-ls493@sha256:c672b9ed0dcaabad0aad95a965493be0b3483673cd5f2e3d2105828be6603bde
 MAILPIT_IMAGE=axllent/mailpit:v1.31.6@sha256:23fe39e81bde596a918000b3135c0f85dc8bb4c9ea6be274b051143f3e300387
