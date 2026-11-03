@@ -96,12 +96,12 @@ stack() {
         -e "s/^SMTP_ENCRYPTION=.*/SMTP_ENCRYPTION=none/" -e "s/^SMTP_AUTHENTICATION=.*/SMTP_AUTHENTICATION=none/" \
         "$dir/.env.example" > "$dir/.env"
     if [ "$authelia" = yes ] && [ -n "$API_IMAGE" ]; then
-        sed -i "s|^#MANAGE_API_IMAGE=.*|MANAGE_API_IMAGE=$API_IMAGE|" "$dir/.env"
+        sed -i "s|^MANAGE_API_IMAGE=.*|MANAGE_API_IMAGE=$API_IMAGE|" "$dir/.env"
     fi
     # compose.manage.yaml needs MANAGE_API_IMAGE (the built-in API is on its
     # way out). Without --manage-api-image the test keeps using the oc-custom
     # image, whose manage-api stays until it's removed from the image
-    if [ ! -s "$dir/.env" ] || ! grep -q '^MANAGE_API_IMAGE=' "$dir/.env"; then
+    if ! grep -q '^MANAGE_API_IMAGE=.\+' "$dir/.env"; then
         echo "MANAGE_API_IMAGE=$IMAGE" >> "$dir/.env"
     fi
     # The management API's token is shown once, indented on its own line
