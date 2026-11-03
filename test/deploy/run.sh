@@ -28,6 +28,10 @@ while [ $# -gt 0 ]; do
         *) sed -n '2,13p' "$0" >&2; exit 1 ;;
     esac
 done
+# The management API runs from its own image (the oc-custom image doesn't
+# carry it since the built-in removal): without --manage-api-image there is
+# no API to test (--clean needs none)
+[ -n "$API_IMAGE" ] || [ -n "$KEEP" ] || { echo "give --manage-api-image: the oc-custom image carries the management API no more (e.g. a locally built cloud-manage-api image)" >&2; exit 1; }
 
 SWAG_IMAGE=lscr.io/linuxserver/swag:5.8.0-ls493@sha256:c672b9ed0dcaabad0aad95a965493be0b3483673cd5f2e3d2105828be6603bde
 MAILPIT_IMAGE=axllent/mailpit:v1.31.6@sha256:23fe39e81bde596a918000b3135c0f85dc8bb4c9ea6be274b051143f3e300387
@@ -95,15 +99,9 @@ stack() {
         -e "s/^SMTP_HOST=.*/SMTP_HOST=dtest-mailpit/" -e "s/^SMTP_PORT=.*/SMTP_PORT=1025/" \
         -e "s/^SMTP_ENCRYPTION=.*/SMTP_ENCRYPTION=none/" -e "s/^SMTP_AUTHENTICATION=.*/SMTP_AUTHENTICATION=none/" \
         "$dir/.env.example" > "$dir/.env"
-    if [ "$authelia" = yes ] && [ -n "$API_IMAGE" ]; then
-        sed -i "s|^MANAGE_API_IMAGE=.*|MANAGE_API_IMAGE=$API_IMAGE|" "$dir/.env"
-    fi
-    # compose.manage.yaml needs MANAGE_API_IMAGE (the built-in API is on its
-    # way out). Without --manage-api-image the test keeps using the oc-custom
-    # image, whose manage-api stays until it's removed from the image
-    if ! grep -q '^MANAGE_API_IMAGE=.\+' "$dir/.env"; then
-        echo "MANAGE_API_IMAGE=$IMAGE" >> "$dir/.env"
-    fi
+    # The management API's program comes from its own image (the built-in
+    # one is gone from the oc-custom image)
+    sed -i "s|^MANAGE_API_IMAGE=.*|MANAGE_API_IMAGE=$API_IMAGE|" "$dir/.env"
     # The management API's token is shown once, indented on its own line
     (cd "$dir" && ./setup.sh) | awk '/shown only now/ { f = 1 } f && /^    [A-Za-z0-9_-]{43}$/ { print $1; exit }' > "$dir/.manage-token"
     [ -s "$dir/.manage-token" ] || { echo "setup.sh showed no management API token" >&2; exit 1; }
@@ -269,8 +267,13 @@ check "users.sh revokes its app token when it's done" \
 check "the user file is private (600)" '[ "$(stat -c %a authelia/users/users_database.yml)" = 600 ]'
 
 echo "  --    the management API (with Authelia), at ${SECONDS}s"
-check "the API runs from MANAGE_API_IMAGE when it's set, else from OC_IMAGE" \
-    '[ "$(docker inspect -f "{{.Config.Image}}" "$(docker compose ps -q manage-api)")" = "${API_IMAGE:-$IMAGE}" ]'
+check "the API's program came from MANAGE_API_IMAGE (the bin container)" \
+    '[ "$(docker inspect -f "{{.Config.Image}}" "$(docker compose ps -q manage-api-bin)")" = "$API_IMAGE" ]'
+check "the API runs the oc-custom image with the copied program" \
+    'api="$(docker inspect -f "{{.Image}}" "$(docker compose ps -q manage-api)")" &&
+     oc="$(docker inspect -f "{{.Image}}" "$(docker compose ps -q opencloud)")" &&
+     [ "$api" = "$oc" ] &&
+     docker run --rm --entrypoint sh "$(docker inspect -f "{{.Config.Image}}" "$(docker compose ps -q manage-api)")" -c "[ -x /opt/manage-api/manage-api ]"'
 check "setup.sh stored only the token's SHA-256 (600)" \
     '[ "$(stat -c %a manage-api/token.sha256)" = 600 ] && ! grep -qF "$(cat .manage-token)" manage-api/token.sha256'
 check "the API refuses a missing or wrong token (401)" \
