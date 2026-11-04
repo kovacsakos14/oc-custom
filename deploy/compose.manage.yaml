@@ -1,25 +1,56 @@
 # Adds the management API (README "The management API") to compose.yaml: a
-# small API in the oc-custom image that a management tool calls through SWAG
+# small API that a management tool calls through SWAG
 # (https://<OC_DOMAIN>/manage-api/) instead of SSH and OpenCloud's
 # impersonation. Its token: setup.sh. With Authelia, add
-# compose.manage-authelia.yaml too. From 7.2.4-11 it may also write the
-# branding folder (an API image with branding, MANAGE_API_IMAGE) and keeps
-# its records in ./manage-api/state.
+# compose.manage-authelia.yaml too. It may also write the branding folder
+# (an API image with branding, MANAGE_API_IMAGE) and keeps its records in
+# ./manage-api/state.
 
 services:
+  manage-api-bin:
+    # Only brings the API's program in: it copies it into a volume and exits.
+    # MANAGE_API_IMAGE is the API's own image (its own release cycle); the
+    # server must be able to pull it (docker login for a private registry).
+    image: ${MANAGE_API_IMAGE:?set MANAGE_API_IMAGE in .env to the management API's image (it has its own release cycle)}
+    container_name: ${OC_STACK}-manage-api-bin
+    user: "0:0"
+    command: ["copy-to", "/opt/manage-api"]
+    # It only copies a file: no network, no capabilities
+    network_mode: none
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    volumes:
+      - manage-api-bin:/opt/manage-api
+    restart: "no"
+
   manage-api:
-    # The API in the oc-custom image, or another image of it (MANAGE_API_IMAGE)
-    image: ${MANAGE_API_IMAGE:-${OC_IMAGE}}
+    # The API in the oc-custom image itself, its program from the volume
+    # above: its CLI calls (opencloud, for a user's short-lived app token;
+    # authelia's, for the 2FA devices) are this server's own programs. When
+    # MANAGE_API_IMAGE is set to a new release, the next "docker compose up
+    # -d" reruns manage-api-bin and recreates this container with it.
+    image: ${OC_IMAGE:?set OC_IMAGE in .env to the oc-custom image}
     container_name: ${OC_STACK}-manage-api
+    # The API's image: this container's own image is the oc-custom one and
+    # the program comes through the volume, so without this label a new
+    # MANAGE_API_IMAGE would only rerun manage-api-bin and leave the old
+    # program running here
+    labels:
+      manage-api.image: ${MANAGE_API_IMAGE}
     user: "${PUID}:${PGID}"
-    entrypoint: [manage-api, serve]
+    entrypoint: ["/opt/manage-api/manage-api", "serve"]
     # OpenCloud's network namespace: OpenCloud's CLI here (a user's app
     # token for one action) talks to OpenCloud's internal services, which
     # listen on 127.0.0.1 only. SWAG reaches the API at
     # <OC_STACK>-opencloud:9300. When OpenCloud's container restarts, this
     # one exits within 90 seconds and its restart finds the new namespace.
     network_mode: service:opencloud
-    depends_on: [opencloud]
+    depends_on:
+      opencloud:
+        condition: service_started
+      manage-api-bin:
+        condition: service_completed_successfully
     read_only: true
     tmpfs: [/tmp]
     cap_drop: [ALL]
@@ -29,6 +60,8 @@ services:
       # Only SWAG's X-Real-IP names the client (the limit on failed tokens)
       MANAGE_API_TRUSTED_PROXIES: ${SWAG_CONTAINER:-swag}
     volumes:
+      # The API's program (manage-api-bin copied it there)
+      - manage-api-bin:/opt/manage-api:ro
       # OpenCloud's config, for its CLI
       - ./config:/etc/opencloud:ro
       # token.sha256 (setup.sh)
@@ -40,3 +73,6 @@ services:
       # read-only); the API checks every file it writes
       - ./branding:/branding
     restart: unless-stopped
+
+volumes:
+  manage-api-bin:
